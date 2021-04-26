@@ -1,7 +1,6 @@
 Copyright
 =========
-
-Institute for the Design of Advanced Energy Systems Process Systems Engineering
+The Institute for the Design of Advanced Energy Systems Process Systems Engineering
 Framework (IDAES PSE Framework) was produced under the DOE Institute for the
 Design of Advanced Energy Systems (IDAES), and is copyright (c) 2018-2019 by the
 software owners: The Regents of the University of California, through Lawrence
