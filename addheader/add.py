@@ -2,8 +2,7 @@
 ##############################################################################
 # Copyright
 # =========
-#
-# Institute for the Design of Advanced Energy Systems Process Systems Engineering
+# The Institute for the Design of Advanced Energy Systems Process Systems Engineering
 # Framework (IDAES PSE Framework) was produced under the DOE Institute for the
 # Design of Advanced Energy Systems (IDAES), and is copyright (c) 2018-2019 by the
 # software owners: The Regents of the University of California, through Lawrence
@@ -77,14 +76,21 @@ def print_files(finder):
 
 def _visit_files(finder, func, **kwargs):
     visited = []
-    while True:
-        try:
-            f = finder.get()
-        except IndexError:
-            break
+    for f in finder:
         func(f, **kwargs)
         visited.append(f)
     return visited
+
+
+def detect_files(finder):
+    modifier = FileModifier()  # text is irrelevant
+    has_header, no_header = [], []
+    for f in finder:
+        if modifier.modify(f, detect=True):
+            has_header.append(f)
+        else:
+            no_header.append(f)
+    return has_header, no_header
 
 
 class FileFinder(object):
@@ -106,8 +112,16 @@ class FileFinder(object):
                 _log.info("Positive pattern: {}".format(p[1:]))
         self._root = root
         self._q = deque()
-        for pat in pos_pat:
-            self._find(pat, neg_pat)
+        self._patterns = {"positive": pos_pat, "negative": neg_pat}
+        self._findall()
+
+    def reset(self):
+        self._q = deque()
+        self._findall()
+
+    def _findall(self):
+        for pat in self._patterns["positive"]:
+            self._find(pat, self._patterns["negative"])
 
     def __len__(self):
         return len(self._q)
@@ -130,36 +144,46 @@ class FileFinder(object):
             # just grab all files
             self._q.extend(glob(pat, recursive=True))
 
-    def get(self) -> str:
-        item = self._q.pop()
-        return item
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> str:
+        try:
+            return self._q.pop()
+        except IndexError:
+            raise StopIteration
 
 
-class FileModifier(object):
+class FileModifier:
     comment_pfx = "#"
     comment_sep = comment_pfx * 78
     comment_minsep = comment_pfx * 10
 
-    def __init__(self, text: str):
+    def __init__(self, text: str = None):
+        if text is None:
+            text = "..."
         lines = [l.strip() for l in text.split("\n")]
         self._txt = "\n".join(
             ["{} {}".format(self.comment_pfx, l).strip() for l in lines]
         )
 
-    def modify(self, fname: str, remove=False):
+    def modify(self, fname: str, remove=False, detect=False):
         _log.info("file={}".format(fname))
         # move input file to <name>.orig
-        random_str = uuid4().hex
-        wfname = f"{fname}.orig.{random_str}"
-        try:
-            shutil.move(fname, wfname)
-        except shutil.Error as err:
-            _log.fatal(f"Unable to move file '{fname}' to '{wfname}': {err}")
-            _log.error("Abort file modification loop")
-            return
-        # re-open input filename as the output file
-        f = open(wfname, "r", encoding="utf8")
-        out = open(fname, "w", encoding="utf8")
+        if detect:
+            f = open(fname, "r", encoding="utf8")
+        else:
+            random_str = uuid4().hex
+            wfname = f"{fname}.orig.{random_str}"
+            try:
+                shutil.move(fname, wfname)
+            except shutil.Error as err:
+                _log.fatal(f"Unable to move file '{fname}' to '{wfname}': {err}")
+                _log.error("Abort file modification loop")
+                return
+            # re-open input filename as the output file
+            f = open(wfname, "r", encoding="utf8")
+            out = open(fname, "w", encoding="utf8")
         # re-create the file, modified
         state = "head"
         if remove:
@@ -175,6 +199,24 @@ class FileModifier(object):
                         state = "code"
                 else:
                     out.write(line)
+        elif detect:
+            section_start, section_end = False, False
+            for line in f:
+                if state == "head":
+                    if line.strip().startswith(self.comment_minsep):
+                        state = "copyright"
+                        section_start = True
+                        continue
+                elif state == "copyright":
+                    if line.strip().startswith(self.comment_minsep):
+                        section_end = True
+                        break
+            if section_end:
+                return True
+            elif section_start:
+                _log.error("Start detected without end")
+                return False
+            return False  # no section at all
         else:
             lineno = 0
             ex = re.compile(
@@ -215,14 +257,16 @@ class FileModifier(object):
                 out.close()
                 f.close()
                 shutil.move(wfname, fname)
-                return
-        # finalize the output
-        out.close()
-        f.close()
-        # remove moved <name>.orig, the original input file
-        f.close()
-        os.unlink(wfname)
+                return False
+        if not detect:
+            # finalize the output
+            out.close()
+            f.close()
+            # remove moved <name>.orig, the original input file
+            os.unlink(wfname)
+        return True
 
+# CLI usage
 
 def main() -> int:
     p = argparse.ArgumentParser(

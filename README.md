@@ -75,6 +75,22 @@ header will be:
 hello
 ```
 
+### Using in tests
+
+To test your package for files missing headers, use the following formula:
+```python
+import os
+import mypackage
+from addheader.add import FileFinder, detect_files
+
+def test_headers():
+    root = os.path.dirname(mypackage.__file__)
+    # modify patterns to match the files that should have headers
+    ff = FileFinder(root, glob_pat=["*.py", "~__init__.py"])
+    has_header, missing_header = detect_files(ff)
+    assert len(missing_header) == 0
+```
+
 ## Credits
 The _addheader_ program was developed for use in the [IDAES](www.idaes.org) project and is maintained in the
 IDAES organization in Github at https://github.com/IDAES/addheader . The primary author
