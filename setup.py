@@ -1,3 +1,24 @@
+##############################################################################
+# Copyright
+# =========
+#
+# Institute for the Design of Advanced Energy Systems Process Systems Engineering
+# Framework (IDAES PSE Framework) was produced under the DOE Institute for the
+# Design of Advanced Energy Systems (IDAES), and is copyright (c) 2018-2019 by the
+# software owners: The Regents of the University of California, through Lawrence
+# Berkeley National Laboratory,  National Technology & Engineering Solutions of
+# Sandia, LLC, Carnegie Mellon University, West Virginia University Research
+# Corporation, et al.  All rights reserved.
+#
+# NOTICE.  This Software was developed under funding from the U.S. Department of
+# Energy and the U.S. Government consequently retains certain rights. As such, the
+# U.S. Government has been granted for itself and others acting on its behalf a
+# paid-up, nonexclusive, irrevocable, worldwide license in the Software to
+# reproduce, distribute copies to the public, prepare derivative works, and
+# perform publicly and display publicly, and to permit other to do so. Copyright
+# (C) 2018-2019 IDAES - All Rights Reserved
+#
+##############################################################################
 """
 Project setup with setuptools
 """
@@ -29,8 +50,7 @@ with open("README.md") as f:
 
 
 def read_requirements(input_file):
-    """Build list of requirements from a requirements.txt file
-    """
+    """Build list of requirements from a requirements.txt file"""
     req = []
     for line in input_file:
         s = line.strip()
@@ -50,19 +70,16 @@ with open("requirements.txt") as f:
 setup(
     name="addheader",
     url="https://github.com/idaes/addheader",
-    version="0.0.1",
+    version="0.1.0",
     description="Utility to add headers to source code files",
     long_description=long_description,
     long_description_content_type="text/plain",
     author="IDAES team",
-    # Classifiers help users find your project by categorizing it.
-    #
-    # For a list of valid classifiers, see https://pypi.org/classifiers/
     classifiers=[
         #   3 - Alpha
         #   4 - Beta
         #   5 - Production/Stable
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
         "Intended Audience :: End Users/Desktop",
         "Intended Audience :: Science/Research",
         "License :: OSI Approved :: BSD License",
@@ -85,4 +102,9 @@ setup(
     install_requires=package_list,
     package_data={},
     extras_require={},
+    entry_points={
+        "console_scripts": [
+            "addheader = addheader.add:main",
+        ]
+    },
 )

@@ -1,6 +1,27 @@
 #!/usr/bin/env python
+##############################################################################
+# Copyright
+# =========
+#
+# Institute for the Design of Advanced Energy Systems Process Systems Engineering
+# Framework (IDAES PSE Framework) was produced under the DOE Institute for the
+# Design of Advanced Energy Systems (IDAES), and is copyright (c) 2018-2019 by the
+# software owners: The Regents of the University of California, through Lawrence
+# Berkeley National Laboratory,  National Technology & Engineering Solutions of
+# Sandia, LLC, Carnegie Mellon University, West Virginia University Research
+# Corporation, et al.  All rights reserved.
+#
+# NOTICE.  This Software was developed under funding from the U.S. Department of
+# Energy and the U.S. Government consequently retains certain rights. As such, the
+# U.S. Government has been granted for itself and others acting on its behalf a
+# paid-up, nonexclusive, irrevocable, worldwide license in the Software to
+# reproduce, distribute copies to the public, prepare derivative works, and
+# perform publicly and display publicly, and to permit other to do so. Copyright
+# (C) 2018-2019 IDAES - All Rights Reserved
+#
+##############################################################################
 """
-Put a notice in the header of a source code file.
+Put a notice in the header of all files in a source code tree.
 
 An existing notice will be replaced, and if there is no notice
 encountered then one will be inserted. Detection of the notice
@@ -15,25 +36,16 @@ second and third lines::
 
     #!/usr/bin/env python
     # hello
+    # <notice inserted here>
     import sys
 
 In this file he notice will be inserted before the first line::
 
+    # <notice inserted here>
     '''
     Top of the file comment
     '''
     import logging
-
-
-Finally, if the notice is already there then the entire notice will be
-replaced with the current text::
-
-    ############################################################
-    # Copyright (C) 2099 Nobody
-    # You cannot have this code. Ever. It's too cool.
-    ############################################################
-    import asyncio
-
 """
 import argparse
 from collections import deque
@@ -43,32 +55,41 @@ import os
 import re
 import shutil
 import sys
+from uuid import uuid4
 
-_log = logging.getLogger("annotate_source")
+__author__ = "Dan Gunter (LBNL)"
+
+_log = logging.getLogger(__name__)
 _h = logging.StreamHandler()
-_h.setFormatter(logging.Formatter(fmt="%(asctime)s [%(levelname)s] %(message)s"))
+_h.setFormatter(logging.Formatter(fmt="%(asctime)s [%(levelname)s] addheader: %(message)s"))
 _log.addHandler(_h)
 
 
 def modify_files(finder, modifier, **flags):
-    while True:
-        try:
-            f = finder.get()
-        except IndexError:
-            break
-        modifier.modify(f, **flags)
+    """Main function called for command-line usage"""
+    return _visit_files(finder, modifier.modify, **flags)
 
 
 def print_files(finder):
+    """Print the files."""
+    return _visit_files(finder, print)
+
+
+def _visit_files(finder, func, **kwargs):
+    visited = []
     while True:
         try:
             f = finder.get()
         except IndexError:
             break
-        print(f)
+        func(f, **kwargs)
+        visited.append(f)
+    return visited
 
 
 class FileFinder(object):
+    """Seek and ye shall find."""
+
     def __init__(self, root: str, glob_pat=None):
         if not os.path.isdir(root):
             raise FileNotFoundError('Root directory "{}"'.format(root))
@@ -128,8 +149,14 @@ class FileModifier(object):
     def modify(self, fname: str, remove=False):
         _log.info("file={}".format(fname))
         # move input file to <name>.orig
-        wfname = fname + ".orig"
-        shutil.move(fname, wfname)
+        random_str = uuid4().hex
+        wfname = f"{fname}.orig.{random_str}"
+        try:
+            shutil.move(fname, wfname)
+        except shutil.Error as err:
+            _log.fatal(f"Unable to move file '{fname}' to '{wfname}': {err}")
+            _log.error("Abort file modification loop")
+            return
         # re-open input filename as the output file
         f = open(wfname, "r", encoding="utf8")
         out = open(fname, "w", encoding="utf8")
@@ -159,6 +186,7 @@ class FileModifier(object):
                 out.write(self._txt)
                 out.write("\n{}\n".format(self.comment_sep))
 
+            line = ""
             try:
                 for line in f:
                     lineno += 1
@@ -197,7 +225,9 @@ class FileModifier(object):
 
 
 def main() -> int:
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("root", help="Root path from which to find files")
     p.add_argument("text", help="File containing header text")
     p.add_argument(
@@ -214,7 +244,7 @@ def main() -> int:
         "--dry-run",
         action="store_true",
         dest="dry",
-        help="Do not modify files, just show which files would " "be affected.",
+        help="Do not modify files, just show which files would be affected.",
     )
     p.add_argument(
         "-r",
@@ -233,6 +263,7 @@ def main() -> int:
     )
     args = p.parse_args()
 
+    # Set up logging from verbosity argument
     if args.vb > 1:
         _log.setLevel(logging.DEBUG)
     elif args.vb > 0:
@@ -247,6 +278,7 @@ def main() -> int:
     except Exception as err:
         p.error(f"Cannot read text file: {args.text}: {err}")
 
+    # Check input patterns
     if len(args.pattern) == 0:
         patterns = ["*.py", "~__init__.py"]
     else:
@@ -255,17 +287,25 @@ def main() -> int:
             if os.path.sep in pat:
                 p.error('bad pattern "{}": must be a filename, not a path'.format(pat))
         patterns = args.pattern
+
+    # Initialize file-finder
     finder = FileFinder(args.root, glob_pat=patterns)
     if len(finder) == 0:
         _log.warning(
             'No files found from "{}" matching {}'.format(args.root, "|".join(patterns))
         )
         return 1
+
+    # Find and modify files
     if args.dry:
-        print_files(finder)
+        file_list = print_files(finder)
+        print(f"Found {len(file_list)} files")
     else:
         modifier = FileModifier(notice_text)
-        modify_files(finder, modifier, remove=args.remove)
+        file_list = modify_files(finder, modifier, remove=args.remove)
+        print(f"Modified {len(file_list)} files")
+        if _log.isEnabledFor(logging.INFO):
+            print(f"Files: {', '.join(file_list)}")
 
     return 0
 
