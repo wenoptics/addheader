@@ -21,9 +21,22 @@
 """
 Tests for addheader.add module
 """
+import sys
 import pytest
 import addheader
 from addheader import add
+
+
+class SetArgv:
+    def __init__(self, *args):
+        self._saved_argv = sys.argv
+        self._argv = ["script"] + list(args)
+
+    def __enter__(self):
+        sys.argv = self._argv
+
+    def __exit__(self, *ignored):
+        sys.argv = self._saved_argv
 
 
 def _make_source_tree(root):
@@ -41,7 +54,12 @@ def _make_source_tree(root):
     package = root / "mypackage"
     package.mkdir()
     for f in ("__init__.py", "foo.py", "bar.py"):
-        (package / f).open("w")
+        fp = (package / f).open("w")
+        if f[0] != "_":
+            fp.write("# Comment at top\n"
+                     "import sys\n"
+                     "\n"
+                     "print('Hello, World!')\n")
     tests = package / "tests"
     tests.mkdir()
     for f in ("__init__.py", "test_foo.py", "test_bar.py"):
@@ -96,3 +114,19 @@ def test_headers():
     ff = addheader.add.FileFinder(root, glob_pat=["*.py", "~__init__.py"])
     has_header, missing_header = addheader.add.detect_files(ff)
     assert len(missing_header) == 0
+
+
+def test_cli(tmp_path):
+    _make_source_tree(tmp_path)
+    with (tmp_path / "license.txt").open("w") as f:
+        f.write("Sample license\n"
+                "With some sample text\n")
+    root, text = str(tmp_path / "mypackage"), str(tmp_path / "license.txt")
+    with SetArgv(root, text):
+        addheader.add.main()
+    with SetArgv(root, text, "-r"):
+        addheader.add.main()
+    with SetArgv(root, text, "-n"):
+        addheader.add.main()
+
+

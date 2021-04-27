@@ -268,6 +268,7 @@ class FileModifier:
 
 # CLI usage
 
+
 def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
