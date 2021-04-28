@@ -23,7 +23,7 @@ If you have the header file in "copyright.txt", and your source tree is a Python
 package located at "./mypackage",
 then you would invoke the program like this:
 ```shell
-adddheader mypackage copyright.txt
+adddheader mypackage --text copyright.txt
 ```
 By default, the header will not be added to "__init__.py" files.
 
@@ -46,11 +46,11 @@ mypackage
 ```
 The following commands would match the following lists of files:
 
-* `addheader mypackage header.txt -p *.py`  
+* `addheader mypackage -t header.txt -p *.py`  
 mypackage/{__init__.py, foo.py, bar.py}, mypackage/tests/{__init__.py, test_foo.py, test_bar.py}
-* `addheader mypackage header.txt -p *.py -p ~__init__.py`  
+* `addheader mypackage -t header.txt -p *.py -p ~__init__.py`  
 mypackage/{foo.py, bar.py}, mypackage/tests/{test_foo.py, test_bar.py}
-* `addheader mypackage header.txt -p *.py -p ~__init__.py -p ~test_*.py`  
+* `addheader mypackage -t header.txt -p *.py -p ~__init__.py -p ~test_*.py`  
 mypackage/{foo.py, bar.py}
   
 ### Header delimiters

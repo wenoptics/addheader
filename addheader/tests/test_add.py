@@ -69,30 +69,30 @@ def _make_source_tree(root):
 def test_file_finder(tmp_path):
     _make_source_tree(tmp_path)
     root = str(tmp_path.resolve())
-    ff = add.FileFinder(root, glob_pat=["*"])
+    ff = add.FileFinder(root, glob_patterns=["*"])
     assert len(ff) == 8
-    ff = add.FileFinder(root, glob_pat=["*.py", "~test_*.py", "~__init__.py"])
+    ff = add.FileFinder(root, glob_patterns=["*.py", "~test_*.py", "~__init__.py"])
     assert len(ff) == 2
 
 
 def test_file_modifier(tmp_path):
     _make_source_tree(tmp_path)
     root = str(tmp_path.resolve())
-    ff = add.FileFinder(root, glob_pat=["*.py", "~test_*.py", "~__init__.py"])
+    ff = add.FileFinder(root, glob_patterns=["*.py", "~test_*.py", "~__init__.py"])
     assert len(ff) == 2
     fm = add.FileModifier("""
     Header for
     all the files""")
     # add header to files
     for f in ff:
-        ok = fm.modify(f)
-        assert ok
+        detected = fm.replace(f)
+        assert not detected
     ff.reset()
     # make sure on second pass nothing changes
     for f in ff:
         old_text = open(f).read()
-        ok = fm.modify(f)
-        assert ok
+        detected = fm.replace(f)
+        assert detected
         new_text = open(f).read()
         assert old_text == new_text
 
@@ -101,17 +101,17 @@ def test_detect_files(tmp_path):
     _make_source_tree(tmp_path)
     root = str(tmp_path.resolve())
     # only foo
-    ff = add.FileFinder(root, glob_pat=["*.py", "~bar.py", "~test_*.py", "~__init__.py"])
+    ff = add.FileFinder(root, glob_patterns=["*.py", "~bar.py", "~test_*.py", "~__init__.py"])
     assert len(ff) == 1
     has_header, no_header = add.detect_files(ff)
     assert len(has_header) == 0
-    assert no_header == [str((tmp_path / "mypackage" / "foo.py").resolve())]
+    assert no_header == [tmp_path / "mypackage" / "foo.py"]
 
 
 def test_headers():
     import os
     root = os.path.dirname(addheader.__file__)
-    ff = addheader.add.FileFinder(root, glob_pat=["*.py", "~__init__.py"])
+    ff = addheader.add.FileFinder(root, glob_patterns=["*.py", "~__init__.py"])
     has_header, missing_header = addheader.add.detect_files(ff)
     assert len(missing_header) == 0
 
@@ -122,11 +122,13 @@ def test_cli(tmp_path):
         f.write("Sample license\n"
                 "With some sample text\n")
     root, text = str(tmp_path / "mypackage"), str(tmp_path / "license.txt")
-    with SetArgv(root, text):
+    with SetArgv(root, "-t", text):
         addheader.add.main()
-    with SetArgv(root, text, "-r"):
+    with SetArgv(root, "-r"):
         addheader.add.main()
-    with SetArgv(root, text, "-n"):
+    with SetArgv(root, "-n"):
+        addheader.add.main()
+    with SetArgv(root, "-t", text, "--sep", "=", "--comment", "//", "--sep-len", "80"):
         addheader.add.main()
 
 

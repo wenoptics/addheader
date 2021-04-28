@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 ##############################################################################
 # Copyright
 # =========
@@ -48,36 +47,30 @@ In this file he notice will be inserted before the first line::
 """
 import argparse
 from collections import deque
-from glob import glob, fnmatch
+from fnmatch import fnmatch
 import logging
 import os
+from pathlib import Path
 import re
 import shutil
 import sys
+from typing import List, Union, Optional
 from uuid import uuid4
 
 __author__ = "Dan Gunter (LBNL)"
 
 _log = logging.getLogger(__name__)
 _h = logging.StreamHandler()
-_h.setFormatter(logging.Formatter(fmt="%(asctime)s [%(levelname)s] addheader: %(message)s"))
+_h.setFormatter(
+    logging.Formatter(fmt="%(asctime)s [%(levelname)s] addheader: %(message)s")
+)
 _log.addHandler(_h)
 
 
-def modify_files(finder, modifier, **flags):
-    """Main function called for command-line usage"""
-    return _visit_files(finder, modifier.modify, **flags)
-
-
-def print_files(finder):
-    """Print the files."""
-    return _visit_files(finder, print)
-
-
-def _visit_files(finder, func, **kwargs):
+def visit_files(finder, func):
     visited = []
     for f in finder:
-        func(f, **kwargs)
+        func(f)
         visited.append(f)
     return visited
 
@@ -86,7 +79,7 @@ def detect_files(finder):
     modifier = FileModifier()  # text is irrelevant
     has_header, no_header = [], []
     for f in finder:
-        if modifier.modify(f, detect=True):
+        if modifier.detect(f):
             has_header.append(f)
         else:
             no_header.append(f)
@@ -94,55 +87,59 @@ def detect_files(finder):
 
 
 class FileFinder(object):
-    """Seek and ye shall find."""
+    """Seek and ye shall find.
 
-    def __init__(self, root: str, glob_pat=None):
-        if not os.path.isdir(root):
-            raise FileNotFoundError('Root directory "{}"'.format(root))
-        glob_pat = ["*.py"] if glob_pat is None else glob_pat
-        neg_pat, pos_pat = [], []
-        for p in glob_pat:
-            if not p:
-                pass
-            if p[0] == "~":
-                neg_pat.append(p[1:])
-                _log.info("Negative pattern: {}".format(p[1:]))
+    Use this class as an iterator, e.g.::
+
+        for path in FileFinder(..args..):
+           <do something with 'path'>
+    """
+
+    DEFAULT_PATTERNS = ["*.py", "~__*"]
+
+    def __init__(
+        self, root: Union[str, Path], glob_patterns: Optional[List[str]] = None
+    ):
+        if not hasattr(root, "open"):  # not a Path-like
+            root = Path(root)
+        if not root.is_dir():
+            raise FileNotFoundError(f"Root must be a directory: {root}")
+        if glob_patterns is None:
+            # use default patterns if none are given
+            glob_patterns = self.DEFAULT_PATTERNS.copy()
+        else:
+            # eliminate empty patterns in input list
+            glob_patterns = list(filter(None, glob_patterns))
+        self._patterns = {"negative": [], "positive": []}
+        for gp in glob_patterns:
+            if gp[0] == "~":
+                self._patterns["negative"].append(gp[1:])
             else:
-                pos_pat.append(p)
-                _log.info("Positive pattern: {}".format(p[1:]))
-        self._root = root
-        self._q = deque()
-        self._patterns = {"positive": pos_pat, "negative": neg_pat}
-        self._findall()
+                self._patterns["positive"].append(gp)
+
+        self._root, self._q = root, None
+        self.reset()
 
     def reset(self):
         self._q = deque()
-        self._findall()
-
-    def _findall(self):
         for pat in self._patterns["positive"]:
-            self._find(pat, self._patterns["negative"])
+            self._find(pat)
 
     def __len__(self):
         return len(self._q)
 
-    def _find(self, glob_pat, neg_pat):
-        pat = os.path.join(self._root, "**", glob_pat)
-        if neg_pat:
-            # need to check each file, to eliminate bad ones
-            for fpath in glob(pat, recursive=True):
-                f, ok = os.path.basename(fpath), True
-                # eliminate any that match a negative pattern
-                for np in neg_pat:
-                    _log.debug("Match file {} to pattern {}".format(f, np))
-                    if fnmatch.fnmatchcase(f, np):
-                        ok = False
-                        break
-                if ok:
-                    self._q.append(fpath)
-        else:
-            # just grab all files
-            self._q.extend(glob(pat, recursive=True))
+    def _find(self, pattern: str):
+        """Recursively find all files matching glob 'pattern' from `self._root`
+        and add these files (as Path objects) to `self._q`.
+        """
+        for path in self._root.glob(f"**/{pattern}"):
+            match_exclude = False
+            for exclude in self._patterns["negative"]:
+                if fnmatch(path.name, exclude):
+                    match_exclude = True
+                    break
+            if not match_exclude:
+                self._q.append(path)
 
     def __iter__(self):
         return self
@@ -155,126 +152,176 @@ class FileFinder(object):
 
 
 class FileModifier:
-    comment_pfx = "#"
-    comment_sep = comment_pfx * 78
-    comment_minsep = comment_pfx * 10
+    """Modify a file with a header."""
 
-    def __init__(self, text: str = None):
+    DEFAULT_COMMENT = "#"
+    DEFAULT_DELIM_CHAR = "#"
+    DEFAULT_DELIM_LEN = 78
+    DELIM_MINLEN = 10
+    # File 'magic' allowed in first two lines before comment
+    magic_expr = re.compile(
+        r"^[ \t\f]*#" "(.*?coding[:=][ \t]*[-_.a-zA-Z0-9]+|" "!/.*)"
+    )
+
+    def __init__(
+        self,
+        text: str = None,
+        comment_prefix=DEFAULT_COMMENT,
+        delim_char=DEFAULT_DELIM_CHAR,
+        delim_len=DEFAULT_DELIM_LEN,
+    ):
+        """Constructor.
+
+        Args:
+            text: Text to place in header. Ignore for remove and detect functions.
+            comment_prefix: Character(s) the start of a line that indicates a comment
+            delim_char: Character to repeat for the delimiter line
+            delim_len: Number of `delim_char` characters to put together to make a delimiter line
+        """
+        self._pfx = comment_prefix
+        self._sep = comment_prefix + delim_char * delim_len
+        self._minsep = comment_prefix + delim_char * self.DELIM_MINLEN
         if text is None:
             text = "..."
         lines = [l.strip() for l in text.split("\n")]
-        self._txt = "\n".join(
-            ["{} {}".format(self.comment_pfx, l).strip() for l in lines]
-        )
+        self._txt = "\n".join([f"{self._pfx} {line}".strip() for line in lines])
 
-    def modify(self, fname: str, remove=False, detect=False):
-        _log.info("file={}".format(fname))
+    def replace(self, path: Path):
+        """Modify header in the file at 'path'.
+
+        Args:
+            path: File to replace.
+
+        Returns:
+
+        """
+        _log.info(f"Modify header in file: {path}")
+        return self._process(path, mode="replace")
+
+    def remove(self, path):
+        """Remove header from the file at 'path'.
+
+        Args:
+            path: File to remove header from.
+
+        Returns:
+
+        """
+        _log.info(f"Remove header from file: {path}")
+        return self._process(path, mode="remove")
+
+    def detect(self, path) -> bool:
+        """Detect header in the file at 'path'.
+
+        Args:
+            path: File to remove header from.
+
+        Returns:
+            True if there was a header, else False
+        """
+        _log.info(f"Remove header from file: {path}")
+        return self._process(path, mode="detect")
+
+    def _process(self, path, mode) -> bool:
         # move input file to <name>.orig
-        if detect:
-            f = open(fname, "r", encoding="utf8")
+        if mode == "detect":
+            f = path.open("r", encoding="utf8")
+            out, fname, wfname = None, None, None
         else:
             random_str = uuid4().hex
+            fname = str(path.resolve())
             wfname = f"{fname}.orig.{random_str}"
             try:
                 shutil.move(fname, wfname)
             except shutil.Error as err:
                 _log.fatal(f"Unable to move file '{fname}' to '{wfname}': {err}")
                 _log.error("Abort file modification loop")
-                return
+                return False
             # re-open input filename as the output file
             f = open(wfname, "r", encoding="utf8")
             out = open(fname, "w", encoding="utf8")
         # re-create the file, modified
-        state = "head"
-        if remove:
+        state, lineno = "pre", 0
+        detected, line_stripped = False, ""
+        try:
+            # Main loop
             for line in f:
-                if state == "head":
-                    if line.strip().startswith(self.comment_minsep):
-                        state = "copyright"
-                        continue
+                line_stripped = line.strip()
+                if state == "pre":
+                    if line_stripped.startswith(self._minsep):  # start of header
+                        state = "header"
+                    elif lineno < 3 and self.magic_expr.match(line_stripped):
+                        if mode != "detect":
+                            out.write(line)
                     else:
+                        state = "post"  # no header, will copy rest of file
+                    # if we changed state, write the header (or skip it)
+                    if state != "pre" and mode == "replace":
+                        self._write_header(out)
+                    if state == "post" and mode != "detect":
+                        # no header, so write last line of text below header
                         out.write(line)
-                elif state == "copyright":
-                    if line.strip().startswith(self.comment_minsep):
-                        state = "code"
-                else:
-                    out.write(line)
-        elif detect:
-            section_start, section_end = False, False
-            for line in f:
-                if state == "head":
-                    if line.strip().startswith(self.comment_minsep):
-                        state = "copyright"
-                        section_start = True
-                        continue
-                elif state == "copyright":
-                    if line.strip().startswith(self.comment_minsep):
-                        section_end = True
-                        break
-            if section_end:
-                return True
-            elif section_start:
-                _log.error("Start detected without end")
-                return False
-            return False  # no section at all
-        else:
-            lineno = 0
-            ex = re.compile(
-                r"^[ \t\f]*#" "(.*?coding[:=][ \t]*[-_.a-zA-Z0-9]+|" "!/.*)"
-            )
-
-            def write_copyright():
-                out.write("{}\n".format(self.comment_sep))
-                out.write(self._txt)
-                out.write("\n{}\n".format(self.comment_sep))
-
-            line = ""
-            try:
-                for line in f:
-                    lineno += 1
-                    sline = line.strip()
-                    if state == "head":
-                        if sline.startswith(self.comment_minsep):
-                            state = "copyright"  # skip past this
-                        elif lineno < 3 and ex.match(sline):
-                            out.write(line)
-                        else:
-                            state = "text"
-                            write_copyright()
-                            out.write(line)
-                    elif state == "copyright":
-                        if sline.startswith(self.comment_minsep):
-                            state = "text"
-                            write_copyright()
-                    elif state == "text":
+                elif state == "header":
+                    # none of the modes write the old header
+                    if line_stripped.startswith(self._minsep):  # end of header
+                        detected = True
+                        state = "post"
+                elif state == "post":
+                    # replace/remove both copy all lines after header
+                    if mode != "detect":
                         out.write(line)
-            except UnicodeDecodeError as err:
-                _log.error(f"File {fname}:{lineno} error: {err}")
-                _log.error(f"Previous line: {line}")
+                lineno += 1
+        except UnicodeDecodeError as err:
+            _log.error(f"File {path}:{lineno} error: {err}")
+            _log.error(f"Previous line: {line_stripped}")
+            if mode != "detect":
                 _log.warning(
                     f"Restoring original file '{fname}'. You must manually fix it!"
                 )
                 out.close()
                 f.close()
                 shutil.move(wfname, fname)
-                return False
-        if not detect:
+        if state == "header":
+            _log.error(f"Header started but did not end in file: {path}")
+        if mode != "detect":
             # finalize the output
             out.close()
             f.close()
             # remove moved <name>.orig, the original input file
             os.unlink(wfname)
-        return True
+        return detected
+
+    def _write_header(self, outfile):
+        outfile.write(self._sep)
+        outfile.write("\n")
+        outfile.write(self._txt)
+        outfile.write("\n")
+        outfile.write(self._sep)
+        outfile.write("\n")
+
 
 # CLI usage
 
+g_quiet = False
+
+
+def tell_user(message):
+    if not g_quiet:
+        print(message)
+
 
 def main() -> int:
+    global g_quiet
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument("root", help="Root path from which to find files")
-    p.add_argument("text", help="File containing header text")
+    p.add_argument(
+        "-t",
+        "--text",
+        help="File containing header text. "
+        "Ignored if --dry-run or --remove options are given.",
+    )
     p.add_argument(
         "-p",
         "--pattern",
@@ -289,15 +336,22 @@ def main() -> int:
         "--dry-run",
         action="store_true",
         dest="dry",
-        help="Do not modify files, just show which files would be affected.",
+        help="Do not modify files, just show which files would be affected",
     )
     p.add_argument(
         "-r",
         "--remove",
         action="store_true",
         dest="remove",
-        help="Remove any existing headers",
+        help="Remove headers from files, but do not replace them with anything",
     )
+    p.add_argument("--comment",
+                   help=f"Comment prefix (default='{FileModifier.DEFAULT_COMMENT})'")
+    p.add_argument("--sep",
+                   help=f"Separator character (default='{FileModifier.DEFAULT_DELIM_CHAR})'")
+    p.add_argument("--sep-len",
+                   type=int, default=-1,
+                   help=f"Separator length (default={FileModifier.DEFAULT_DELIM_LEN})")
     p.add_argument(
         "-v",
         "--verbose",
@@ -306,10 +360,14 @@ def main() -> int:
         default=0,
         help="More verbose logging",
     )
+    p.add_argument("-q", "--quiet", action="store_true", help="Suppress all output")
     args = p.parse_args()
 
     # Set up logging from verbosity argument
-    if args.vb > 1:
+    if args.quiet:
+        _log.setLevel(logging.FATAL)
+        g_quiet = True
+    elif args.vb > 1:
         _log.setLevel(logging.DEBUG)
     elif args.vb > 0:
         _log.setLevel(logging.INFO)
@@ -317,11 +375,23 @@ def main() -> int:
         _log.setLevel(logging.WARN)
 
     # read notice from file
-    try:
-        with open(args.text, "r") as f:
-            notice_text = f.read()
-    except Exception as err:
-        p.error(f"Cannot read text file: {args.text}: {err}")
+    notice_text = ""
+    if args.remove:
+        if args.text:
+            tell_user(f"-r/--remove option given so text '{args.text}' will be ignored")
+    elif args.dry:
+        if args.text:
+            tell_user(
+                f"-d/--dry-run option given so text '{args.text}' will be ignored"
+            )
+    else:
+        if not args.text:
+            p.error(f"-t/--text is required to replace current header text")
+        try:
+            with open(args.text, "r") as f:
+                notice_text = f.read()
+        except Exception as err:
+            p.error(f"Cannot read text file: {args.text}: {err}")
 
     # Check input patterns
     if len(args.pattern) == 0:
@@ -334,23 +404,35 @@ def main() -> int:
         patterns = args.pattern
 
     # Initialize file-finder
-    finder = FileFinder(args.root, glob_pat=patterns)
+    finder = FileFinder(args.root, glob_patterns=patterns)
     if len(finder) == 0:
         _log.warning(
             'No files found from "{}" matching {}'.format(args.root, "|".join(patterns))
         )
         return 1
 
-    # Find and modify files
+    # Find and replace files
     if args.dry:
-        file_list = print_files(finder)
-        print(f"Found {len(file_list)} files")
+        file_list = visit_files(finder, tell_user)
+        plural = "s" if len(file_list) > 1 else ""
+        tell_user(f"Found {len(file_list)} file{plural}")
     else:
-        modifier = FileModifier(notice_text)
-        file_list = modify_files(finder, modifier, remove=args.remove)
-        print(f"Modified {len(file_list)} files")
+        kwargs = {}
+        if args.comment:
+            kwargs["comment_prefix"] = args.comment
+        if args.sep:
+            kwargs["delim_char"] = args.sep[0]
+        if args.sep_len > 0:
+            if args.sep_len < FileModifier.DELIM_MINLEN:
+                p.error(f"Separator length from '--sep-len' option must be >= {FileModifier.DELIM_MINLEN}")
+            kwargs["delim_len"] = args.sep_len
+        modifier = FileModifier(notice_text, **kwargs)
+        modifier_func = modifier.remove if args.remove else modifier.replace
+        file_list = visit_files(finder, modifier_func)
+        plural = "s" if len(file_list) > 1 else ""
+        tell_user(f"Modified {len(file_list)} file{plural}")
         if _log.isEnabledFor(logging.INFO):
-            print(f"Files: {', '.join(file_list)}")
+            tell_user(f"Files: {', '.join(map(str, file_list))}")
 
     return 0
 
