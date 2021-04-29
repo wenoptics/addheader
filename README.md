@@ -2,7 +2,7 @@
 This repository contains a single command to manage a header section, 
 e.g. copyright, for a source code tree.
 
-Using UNIX glob patterns, _addheader_ modifies an entire tree of
+Using UNIX glob patterns, addheader modifies an entire tree of
 source code at once. The program replaces existing headers with
 an updated version, and places the header after any shell magic
 at the top of the file.
