@@ -32,21 +32,24 @@ import re
 # this will come in handy, probably
 cwd = pathlib.Path(__file__).parent.resolve()
 
-# Parse long description from README.md file
-with open("README.md") as f:
-    lines, capture = [], False
-    for line in f:
-        s = line.strip()
-        if re.match(r"#\s*[Aa]bout", s):
-            capture = True
-        elif re.match("^#", s):
-            break
-        elif capture is True:
-            lines.append(s)
-    if lines:
-        long_description = " ".join(lines)
-    else:
-        long_description = "DISPATCHES project"
+
+def get_long_description():
+    """Parse long description from README.md file"""
+    with open("README.md") as f:
+        lines, capture = [], False
+        for line in f:
+            s = line.strip()
+            if capture:
+                lines.append(s)
+            if re.match(r"#\s*[a]ddheader", s):
+                capture = True
+            elif re.match("^#", s):
+                break
+        if lines:
+            long_description = " ".join(lines)
+        else:
+            long_description = "DISPATCHES project"
+    return long_description
 
 
 def read_requirements(input_file):
@@ -62,17 +65,19 @@ def read_requirements(input_file):
     return req
 
 
-with open("requirements.txt") as f:
-    package_list = read_requirements(f)
+def get_package_list():
+    with open("requirements.txt") as f:
+        package_list = read_requirements(f)
+    return package_list
 
-########################################################################################
 
+# Main setup command
 setup(
     name="addheader",
     url="https://github.com/idaes/addheader",
-    version="0.1.0",
+    version="0.1.1",
     description="Utility to add headers to source code files",
-    long_description=long_description,
+    long_description=get_long_description(),
     long_description_content_type="text/plain",
     author="IDAES team",
     classifiers=[
@@ -81,7 +86,6 @@ setup(
         #   5 - Production/Stable
         "Development Status :: 4 - Beta",
         "Intended Audience :: End Users/Desktop",
-        "Intended Audience :: Science/Research",
         "License :: OSI Approved :: BSD License",
         "Natural Language :: English",
         "Operating System :: MacOS",
@@ -99,7 +103,7 @@ setup(
     keywords="utility, copyright, license",
     packages=find_namespace_packages(),
     python_requires=">=3.7, <4",
-    install_requires=package_list,
+    install_requires=get_package_list(),
     package_data={},
     extras_require={},
     entry_points={
