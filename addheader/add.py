@@ -45,6 +45,7 @@ In this file he notice will be inserted before the first line::
     '''
     import logging
 """
+# stdlib
 import argparse
 from collections import deque
 from fnmatch import fnmatch
@@ -56,6 +57,10 @@ import shutil
 import sys
 from typing import List, Union, Optional
 from uuid import uuid4
+# third-party
+import yaml
+from yaml import Loader
+
 
 __author__ = "Dan Gunter (LBNL)"
 
@@ -65,6 +70,8 @@ _h.setFormatter(
     logging.Formatter(fmt="%(asctime)s [%(levelname)s] addheader: %(message)s")
 )
 _log.addHandler(_h)
+
+DEFAULT_CONF = "addheader.cfg"
 
 
 def visit_files(finder, func):
@@ -103,7 +110,7 @@ class FileFinder(object):
         if not hasattr(root, "open"):  # not a Path-like
             root = Path(root)
         if not root.is_dir():
-            raise FileNotFoundError(f"Root must be a directory: {root}")
+            raise FileNotFoundError(f"Root '{root}' must be a directory")
         if glob_patterns is None:
             # use default patterns if none are given
             glob_patterns = self.DEFAULT_PATTERNS.copy()
@@ -133,6 +140,7 @@ class FileFinder(object):
         and add these files (as Path objects) to `self._q`.
         """
         for path in self._root.glob(f"**/{pattern}"):
+            _log.debug(f"Checking file: {path.name}")
             match_exclude = False
             for exclude in self._patterns["negative"]:
                 if fnmatch(path.name, exclude):
@@ -140,6 +148,7 @@ class FileFinder(object):
                     break
             if not match_exclude:
                 self._q.append(path)
+                _log.debug(f"File matched: {path.name}")
 
     def __iter__(self):
         return self
@@ -195,7 +204,7 @@ class FileModifier:
         Returns:
 
         """
-        _log.info(f"Modify header in file: {path}")
+        _log.debug(f"Replace header in file: {path}")
         return self._process(path, mode="replace")
 
     def remove(self, path):
@@ -207,7 +216,7 @@ class FileModifier:
         Returns:
 
         """
-        _log.info(f"Remove header from file: {path}")
+        _log.debug(f"Remove header from file: {path}")
         return self._process(path, mode="remove")
 
     def detect(self, path) -> bool:
@@ -219,7 +228,7 @@ class FileModifier:
         Returns:
             True if there was a header, else False
         """
-        _log.info(f"Remove header from file: {path}")
+        _log.debug(f"Remove header from file: {path}")
         return self._process(path, mode="detect")
 
     def _process(self, path, mode) -> bool:
@@ -315,7 +324,8 @@ def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("root", help="Root path from which to find files")
+    p.add_argument("root", help="Root path from which to find files", nargs="?")
+    p.add_argument("-c", "--config", help=f"Configuration file (default={DEFAULT_CONF})")
     p.add_argument(
         "-t",
         "--text",
@@ -363,51 +373,106 @@ def main() -> int:
     p.add_argument("-q", "--quiet", action="store_true", help="Suppress all output")
     args = p.parse_args()
 
+    # Merge get initial conf from config file
+    config_file = None
+    if args.config:
+        config_file = Path(args.config)
+    else:
+        try_config = Path(DEFAULT_CONF)
+        try:
+            try_config.open()
+            config_file = try_config
+        except:
+            pass
+    if config_file:
+        if not config_file.exists():
+            p.error(f"Configuration file '{args.config}' not found")
+        try:
+            with config_file.open() as f:
+                config_data = yaml.load(f, Loader=Loader)
+        except IOError as err:
+            p.error(f"Cannot open configuration file '{config_file.name}' for reading: {err}")
+        except yaml.YAMLError:
+            p.error(f"Syntax error in configuration file '{config_file.name}': {err}")
+    else:
+        config_data = {}
+
     # Set up logging from verbosity argument
-    if args.quiet:
+    vb = 0
+    if args.vb > 0:
+        vb = args.vb
+    elif "verbose" in config_data:
+        try:
+            vb = int(config_data["verbose"])
+        except ValueError:
+            p.error(f"Invalid value for verbose = '{config_data['verbose']}' "
+                    f"in configuration file '{config_file.name}'")
+    if config_data.get("quiet", None) or args.quiet:
         _log.setLevel(logging.FATAL)
         g_quiet = True
-    elif args.vb > 1:
+    elif vb > 1:
         _log.setLevel(logging.DEBUG)
-    elif args.vb > 0:
+    elif vb > 0:
         _log.setLevel(logging.INFO)
     else:
         _log.setLevel(logging.WARN)
 
     # read notice from file
     notice_text = ""
+    if args.text:
+        text_file = args.text
+    elif "text" in config_data:
+        text_file = config_data["text"]
+    else:
+        text_file = None
     if args.remove:
-        if args.text:
-            tell_user(f"-r/--remove option given so text '{args.text}' will be ignored")
+        if text_file is not None:
+            tell_user(f"-r/--remove option given so text '{text_file}' will be ignored")
     elif args.dry:
-        if args.text:
+        if text_file is not None:
             tell_user(
-                f"-d/--dry-run option given so text '{args.text}' will be ignored"
+                f"-d/--dry-run option given so text '{text_file}' will be ignored"
             )
     else:
-        if not args.text:
+        if text_file is None:
             p.error(f"-t/--text is required to replace current header text")
         try:
-            with open(args.text, "r") as f:
+            with open(text_file, "r") as f:
                 notice_text = f.read()
         except Exception as err:
             p.error(f"Cannot read text file: {args.text}: {err}")
 
     # Check input patterns
     if len(args.pattern) == 0:
-        patterns = ["*.py", "~__init__.py"]
+        if "pattern" in config_data:
+            patterns = config_data["pattern"]
+        elif "patterns" in config_data:  # tolerate this alias
+            patterns = config_data["patterns"]
+        else:
+            patterns = ["*.py", "~__init__.py"]
     else:
-        # sanity-check the input patterns
-        for pat in args.pattern:
-            if os.path.sep in pat:
-                p.error('bad pattern "{}": must be a filename, not a path'.format(pat))
         patterns = args.pattern
+    # sanity-check the input patterns
+    for pat in patterns:
+        if os.path.sep in pat:
+            p.error('bad pattern "{}": must be a filename, not a path'.format(pat))
+
+    # Root
+    if args.root:
+        root_dir = args.root
+    elif "root" in config_data:
+        root_dir = config_data["root"]
+    else:
+        p.error("Root directory not found on command-line or configuration file")
 
     # Initialize file-finder
-    finder = FileFinder(args.root, glob_patterns=patterns)
+    try:
+        finder = FileFinder(root_dir, glob_patterns=patterns)
+    except Exception as err:
+        p.error(f"Finding files: {err}")
     if len(finder) == 0:
         _log.warning(
-            'No files found from "{}" matching {}'.format(args.root, "|".join(patterns))
+            'No files found from "{}" matching {}'.format(root_dir, "|".join(patterns))
         )
         return 1
 
@@ -420,12 +485,24 @@ def main() -> int:
         kwargs = {}
         if args.comment:
             kwargs["comment_prefix"] = args.comment
+        elif "comment" in config_data:
+            kwargs["comment_prefix"] = config_data["comment"]
         if args.sep:
             kwargs["delim_char"] = args.sep[0]
+        elif "sep" in config_data:
+            kwargs["delim_char"] = config_data["sep"]
+        sep_len = None
         if args.sep_len > 0:
-            if args.sep_len < FileModifier.DELIM_MINLEN:
+            sep_len = args.sep_len
+        elif "sep-len" in config_data:
+            try:
+                sep_len = int(config_data["sep-len"])
+            except ValueError:
+                p.error(f"Bad value for 'sep-len', expected number got: {config_data['sep-len']}")
+        if sep_len is not None:
+            if sep_len < FileModifier.DELIM_MINLEN:
                 p.error(f"Separator length from '--sep-len' option must be >= {FileModifier.DELIM_MINLEN}")
-            kwargs["delim_len"] = args.sep_len
+            kwargs["delim_len"] = sep_len
         modifier = FileModifier(notice_text, **kwargs)
         modifier_func = modifier.remove if args.remove else modifier.replace
         file_list = visit_files(finder, modifier_func)
