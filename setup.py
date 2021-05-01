@@ -1,7 +1,8 @@
+#!/usr/bin/env python
 """
 Setuptools file
 """
-from setuptools import setup
+import setuptools
 
-# Minimal setup, uses setup.cfg
-setup()
+if __name__ == "__main__":
+    setuptools.setup()
