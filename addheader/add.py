@@ -29,7 +29,7 @@ of comment characters, then the notice will be inserted. Likewise, the
 "end" of the notice is either the same separator used for the beginning or
 a line that is not commented.
 
-For example, in the following he notice will be inserted between the
+For example, in the following the notice will be inserted between the
 second and third lines::
 
     #!/usr/bin/env python
@@ -37,7 +37,7 @@ second and third lines::
     # <notice inserted here>
     import sys
 
-In this file he notice will be inserted before the first line::
+In this file the notice will be inserted before the first line::
 
     # <notice inserted here>
     '''
@@ -103,9 +103,11 @@ class FileFinder(object):
     """
 
     DEFAULT_PATTERNS = ["*.py", "~__*"]
+    DEFAULT_PATH_EXCLUDE = [".?*"]
 
     def __init__(
-        self, root: Union[str, Path], glob_patterns: Optional[List[str]] = None
+        self, root: Union[str, Path], glob_patterns: Optional[List[str]] = None,
+            path_exclude: Optional[List[str]] = None
     ):
         if not hasattr(root, "open"):  # not a Path-like
             root = Path(root)
@@ -117,6 +119,7 @@ class FileFinder(object):
         else:
             # eliminate empty patterns in input list
             glob_patterns = list(filter(None, glob_patterns))
+        self._path_exclude = path_exclude or self.DEFAULT_PATH_EXCLUDE.copy()
         self._patterns = {"negative": [], "positive": []}
         for gp in glob_patterns:
             if gp[0] == "~":
@@ -144,6 +147,11 @@ class FileFinder(object):
             match_exclude = False
             for exclude in self._patterns["negative"]:
                 if fnmatch(path.name, exclude):
+                    match_exclude = True
+                    break
+            spath = str(path)
+            for excludep in self._path_exclude:
+                if fnmatch(spath, excludep):
                     match_exclude = True
                     break
             if not match_exclude:
@@ -342,6 +350,13 @@ def main() -> int:
         "(default = *.py, ~__init__.py)",
     )
     p.add_argument(
+        "-P",
+        "--path-exclude",
+        action="append",
+        default=[],
+        help="UNIX glob-style pattern of paths to exclude (repeatable)"
+    )
+    p.add_argument(
         "-n",
         "--dry-run",
         action="store_true",
@@ -392,7 +407,7 @@ def main() -> int:
                 config_data = yaml.load(f, Loader=Loader)
         except IOError as err:
             p.error(f"Cannot open configuration file '{config_file.name}' for reading: {err}")
-        except yaml.YAMLError:
+        except yaml.YAMLError as err:
             p.error(f"Syntax error in configuration file '{config_file.name}': {err}")
     else:
         config_data = {}
@@ -431,7 +446,7 @@ def main() -> int:
     elif args.dry:
         if text_file is not None:
             tell_user(
-                f"-d/--dry-run option given so text '{text_file}' will be ignored"
+                f"-n/--dry-run option given so text '{text_file}' will be ignored"
             )
     else:
         if text_file is None:
@@ -465,9 +480,15 @@ def main() -> int:
     else:
         p.error("Root directory not found on command-line or configuration file")
 
+    if config_data.get("path_exclude", None) is None:
+        path_exclude = None if len(args.path_exclude) == 0 else args.path_exclude
+    else:
+        path_exclude = config_data["path_exclude"]
+
     # Initialize file-finder
     try:
-        finder = FileFinder(root_dir, glob_patterns=patterns)
+        finder = FileFinder(root_dir, glob_patterns=patterns,
+                            path_exclude=path_exclude)
     except Exception as err:
         p.error(f"Finding files: {err}")
     if len(finder) == 0:
