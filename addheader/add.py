@@ -350,6 +350,16 @@ def main() -> int:
         "(default = *.py, ~__init__.py)",
     )
     p.add_argument(
+        "-j",
+        "--jupyter",
+        action="store",
+        nargs="?",
+        default=None,
+        const="ipynb",
+        help="Also add/replace headers on Jupyter notebooks. The optional argument "
+             "is the extension to use in place of 'ipynb' for recognizing notebooks"
+    )
+    p.add_argument(
         "-P",
         "--path-exclude",
         action="append",
