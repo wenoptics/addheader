@@ -47,7 +47,7 @@ In this file the notice will be inserted before the first line::
 """
 # stdlib
 import argparse
-from collections import deque
+import json
 from fnmatch import fnmatch
 import logging
 import os
@@ -57,6 +57,7 @@ import shutil
 import sys
 from typing import List, Union, Optional
 from uuid import uuid4
+
 # third-party
 import yaml
 from yaml import Loader
@@ -83,7 +84,7 @@ def visit_files(finder, func):
 
 
 def detect_files(finder):
-    modifier = FileModifier()  # text is irrelevant
+    modifier = TextFileModifier()  # text is irrelevant
     has_header, no_header = [], []
     for f in finder:
         if modifier.detect(f):
@@ -96,18 +97,21 @@ def detect_files(finder):
 class FileFinder(object):
     """Seek and ye shall find.
 
-    Use this class as an iterator, e.g.::
+    Iterate over one of these attributes to get the files:
 
-        for path in FileFinder(..args..):
-           <do something with 'path'>
+        * `files` = Text files
+        * `notebooks` = Jupyter Notebooks
     """
 
     DEFAULT_PATTERNS = ["*.py", "~__*"]
     DEFAULT_PATH_EXCLUDE = [".?*"]
 
     def __init__(
-        self, root: Union[str, Path], glob_patterns: Optional[List[str]] = None,
-            path_exclude: Optional[List[str]] = None
+        self,
+        root: Union[str, Path],
+        glob_patterns: Optional[List[str]] = None,
+        path_exclude: Optional[List[str]] = None,
+        jupyter_ext: Optional[str] = None,
     ):
         if not hasattr(root, "open"):  # not a Path-like
             root = Path(root)
@@ -127,16 +131,29 @@ class FileFinder(object):
             else:
                 self._patterns["positive"].append(gp)
 
-        self._root, self._q = root, None
+        # If Jupyter notebooks are enabled, add the Jupyter extension
+        if jupyter_ext:
+            if "." not in jupyter_ext:  # raw 'ipynb' or whatever
+                self._jupyter_ext = "." + jupyter_ext
+            else: # e.g. _src.ipynb
+                self._jupyter_ext = jupyter_ext
+            self._patterns["positive"].append(f"*{self._jupyter_ext}")
+        else:
+            self._jupyter_ext = None
+
+        self._root, self._q, self._jupyter_q = root, None, None
         self.reset()
 
     def reset(self):
-        self._q = deque()
+        self._q = []
+        if self._jupyter_ext:
+            self._jupyter_q = []
         for pat in self._patterns["positive"]:
             self._find(pat)
 
     def __len__(self):
-        return len(self._q)
+        jn = len(self._jupyter_q) if self._jupyter_q else 0
+        return len(self._q) + jn
 
     def _find(self, pattern: str):
         """Recursively find all files matching glob 'pattern' from `self._root`
@@ -155,54 +172,23 @@ class FileFinder(object):
                     match_exclude = True
                     break
             if not match_exclude:
-                self._q.append(path)
-                _log.debug(f"File matched: {path.name}")
+                if self._jupyter_ext and path.name.endswith(self._jupyter_ext):
+                    self._jupyter_q.append(path)
+                    _log.debug(f"Notebook matched: {path.name}")
+                else:
+                    self._q.append(path)
+                    _log.debug(f"File matched: {path.name}")
 
-    def __iter__(self):
-        return self
+    @property
+    def files(self):
+        return self._q
 
-    def __next__(self) -> str:
-        try:
-            return self._q.pop()
-        except IndexError:
-            raise StopIteration
+    @property
+    def notebooks(self):
+        return self._jupyter_q
 
 
 class FileModifier:
-    """Modify a file with a header."""
-
-    DEFAULT_COMMENT = "#"
-    DEFAULT_DELIM_CHAR = "#"
-    DEFAULT_DELIM_LEN = 78
-    DELIM_MINLEN = 10
-    # File 'magic' allowed in first two lines before comment
-    magic_expr = re.compile(
-        r"^[ \t\f]*#" "(.*?coding[:=][ \t]*[-_.a-zA-Z0-9]+|" "!/.*)"
-    )
-
-    def __init__(
-        self,
-        text: str = None,
-        comment_prefix=DEFAULT_COMMENT,
-        delim_char=DEFAULT_DELIM_CHAR,
-        delim_len=DEFAULT_DELIM_LEN,
-    ):
-        """Constructor.
-
-        Args:
-            text: Text to place in header. Ignore for remove and detect functions.
-            comment_prefix: Character(s) the start of a line that indicates a comment
-            delim_char: Character to repeat for the delimiter line
-            delim_len: Number of `delim_char` characters to put together to make a delimiter line
-        """
-        self._pfx = comment_prefix
-        self._sep = comment_prefix + delim_char * delim_len
-        self._minsep = comment_prefix + delim_char * self.DELIM_MINLEN
-        if text is None:
-            text = "..."
-        lines = [l.strip() for l in text.split("\n")]
-        self._txt = "\n".join([f"{self._pfx} {line}".strip() for line in lines])
-
     def replace(self, path: Path):
         """Modify header in the file at 'path'.
 
@@ -236,8 +222,44 @@ class FileModifier:
         Returns:
             True if there was a header, else False
         """
-        _log.debug(f"Remove header from file: {path}")
+        _log.debug(f"Detect header in file: {path}")
         return self._process(path, mode="detect")
+
+
+class TextFileModifier(FileModifier):
+    """Modify a file with a header."""
+
+    DEFAULT_COMMENT = "#"
+    DEFAULT_DELIM_CHAR = "#"
+    DEFAULT_DELIM_LEN = 78
+    DELIM_MINLEN = 10
+    # File 'magic' allowed in first two lines before comment
+    magic_expr = re.compile(
+        r"^[ \t\f]*#" "(.*?coding[:=][ \t]*[-_.a-zA-Z0-9]+|" "!/.*)"
+    )
+
+    def __init__(
+        self,
+        text: str = None,
+        comment_prefix=DEFAULT_COMMENT,
+        delim_char=DEFAULT_DELIM_CHAR,
+        delim_len=DEFAULT_DELIM_LEN,
+    ):
+        """Constructor.
+
+        Args:
+            text: Text to place in header. Ignore for remove and detect functions.
+            comment_prefix: Character(s) the start of a line that indicates a comment
+            delim_char: Character to repeat for the delimiter line
+            delim_len: Number of `delim_char` characters to put together to make a delimiter line
+        """
+        self._pfx = comment_prefix
+        self._sep = comment_prefix + delim_char * delim_len
+        self._minsep = comment_prefix + delim_char * self.DELIM_MINLEN
+        if text is None:
+            text = "..."
+        lines = [l.strip() for l in text.split("\n")]
+        self._txt = "\n".join([f"{self._pfx} {line}".strip() for line in lines])
 
     def _process(self, path, mode) -> bool:
         # move input file to <name>.orig
@@ -317,6 +339,85 @@ class FileModifier:
         outfile.write("\n")
 
 
+class JupyterFileModifier(FileModifier):
+    """Modify a Jupyter notebook with a header."""
+
+    DEFAULT_HEADER_TAG = "header"
+
+    def __init__(self, text: str):
+        """Constructor.
+
+        Args:
+            text: Text to place in header. Ignore for remove and detect functions.
+            delim_char: Character to repeat for the delimiter line
+            delim_len: Number of `delim_char` characters to put together to make a delimiter line
+        """
+        self._text = text
+        self._tag = self.DEFAULT_HEADER_TAG
+
+    def _process(self, path: Path, mode) -> bool:
+        # read in notebook
+        try:
+            with path.open(mode="r", encoding="utf-8") as f:
+                nb = json.load(f)
+            cells = nb["cells"]
+        except json.JSONDecodeError as err:
+            _log.error(f"while parsing Jupyter notebook '{path}': {err}")
+            return False
+        except KeyError:
+            _log.error(f"bad format for Jupyter notebook '{path}': no 'cells'")
+            return False
+
+        # get first cell
+        if len(cells) == 0:
+            _log.error(f"Jupyter notebook is empty")
+            return False
+        cell = cells[0]
+        if cell["cell_type"] != "markdown":
+            if mode != "replace":
+                return False
+        try:
+            meta = cell["metadata"]
+        except KeyError:
+            _log.error(
+                f"bad format for Jupyter notebook '{path}': missing 'metadata' in cell"
+            )
+            return False
+
+        # check that special tag is in the cell metadata tags
+        tags = meta.get("tags", [])
+        if self._tag not in tags:
+            if mode != "replace":
+                return False
+
+        # perform action
+        if mode == "detect":
+            return True  # nothing more to do
+        if mode == "remove":
+            nb["cells"] = cells[1:]
+        elif mode == "replace":
+            text_lines = self._text.split("\n")
+            if cell["cell_type"] != "markdown" or self._tag not in tags:
+                cell = {
+                    "cell_type": "markdown",
+                    "metadata": {"tags": [self._tag, "hide-cell"]},
+                    "source": text_lines
+                }
+                nb["cells"].insert(0, cell)
+            else:
+                cell["source"] = text_lines
+                if "hide-cell" not in tags:
+                    tags.append("hide-cell")
+            # nb["cells"] = [cell] + cells[1:]
+            print(f"@@ replaced header for notebook '{path}'")
+
+        # write back new notebook
+        with path.open(mode="w", encoding="utf-8") as f:
+            json.dump(nb, f, indent=2)
+
+        return True
+
+
 # CLI usage
 
 g_quiet = False
@@ -333,7 +434,9 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument("root", help="Root path from which to find files", nargs="?")
-    p.add_argument("-c", "--config", help=f"Configuration file (default={DEFAULT_CONF})")
+    p.add_argument(
+        "-c", "--config", help=f"Configuration file (default={DEFAULT_CONF})"
+    )
     p.add_argument(
         "-t",
         "--text",
@@ -357,14 +460,14 @@ def main() -> int:
         default=None,
         const="ipynb",
         help="Also add/replace headers on Jupyter notebooks. The optional argument "
-             "is the extension to use in place of 'ipynb' for recognizing notebooks"
+        "is the extension to use in place of 'ipynb' for recognizing notebooks",
     )
     p.add_argument(
         "-P",
         "--path-exclude",
         action="append",
         default=[],
-        help="UNIX glob-style pattern of paths to exclude (repeatable)"
+        help="UNIX glob-style pattern of paths to exclude (repeatable)",
     )
     p.add_argument(
         "-n",
@@ -380,13 +483,20 @@ def main() -> int:
         dest="remove",
         help="Remove headers from files, but do not replace them with anything",
     )
-    p.add_argument("--comment",
-                   help=f"Comment prefix (default='{FileModifier.DEFAULT_COMMENT})'")
-    p.add_argument("--sep",
-                   help=f"Separator character (default='{FileModifier.DEFAULT_DELIM_CHAR})'")
-    p.add_argument("--sep-len",
-                   type=int, default=-1,
-                   help=f"Separator length (default={FileModifier.DEFAULT_DELIM_LEN})")
+    p.add_argument(
+        "--comment",
+        help=f"Comment prefix (default='{TextFileModifier.DEFAULT_COMMENT})'",
+    )
+    p.add_argument(
+        "--sep",
+        help=f"Separator character (default='{TextFileModifier.DEFAULT_DELIM_CHAR})'",
+    )
+    p.add_argument(
+        "--sep-len",
+        type=int,
+        default=-1,
+        help=f"Separator length (default={TextFileModifier.DEFAULT_DELIM_LEN})",
+    )
     p.add_argument(
         "-v",
         "--verbose",
@@ -416,7 +526,9 @@ def main() -> int:
             with config_file.open() as f:
                 config_data = yaml.load(f, Loader=Loader)
         except IOError as err:
-            p.error(f"Cannot open configuration file '{config_file.name}' for reading: {err}")
+            p.error(
+                f"Cannot open configuration file '{config_file.name}' for reading: {err}"
+            )
         except yaml.YAMLError as err:
             p.error(f"Syntax error in configuration file '{config_file.name}': {err}")
     else:
@@ -430,8 +542,10 @@ def main() -> int:
         try:
             vb = int(config_data["verbose"])
         except ValueError:
-            p.error(f"Invalid value for verbose = '{config_data['verbose']}' "
-                    f"in configuration file '{config_file.name}'")
+            p.error(
+                f"Invalid value for verbose = '{config_data['verbose']}' "
+                f"in configuration file '{config_file.name}'"
+            )
     if config_data.get("quiet", None) or args.quiet:
         _log.setLevel(logging.FATAL)
         g_quiet = True
@@ -482,6 +596,24 @@ def main() -> int:
         if os.path.sep in pat:
             p.error('bad pattern "{}": must be a filename, not a path'.format(pat))
 
+    # Jupyter
+    jupyter_ext = None
+    if args.jupyter is None:
+        if "jupyter" in config_data:
+            ext = config_data["jupyter"]
+            if ext is True:
+                jupyter_ext = "ipynb"
+            elif ext is False:
+                pass  # explicitly disabled
+            else:
+                jupyter_ext = str(ext)
+    else:
+        jupyter_ext = args.jupyter
+    if jupyter_ext:
+        _log.debug(f"Jupyter notebook extension: {jupyter_ext}")
+    else:
+        print("@@ no jupyter ext")
+
     # Root
     if args.root:
         root_dir = args.root
@@ -497,8 +629,12 @@ def main() -> int:
 
     # Initialize file-finder
     try:
-        finder = FileFinder(root_dir, glob_patterns=patterns,
-                            path_exclude=path_exclude)
+        finder = FileFinder(
+            root_dir,
+            glob_patterns=patterns,
+            path_exclude=path_exclude,
+            jupyter_ext=jupyter_ext,
+        )
     except Exception as err:
         p.error(f"Finding files: {err}")
     if len(finder) == 0:
@@ -529,18 +665,30 @@ def main() -> int:
             try:
                 sep_len = int(config_data["sep-len"])
             except ValueError:
-                p.error(f"Bad value for 'sep-len', expected number got: {config_data['sep-len']}")
+                p.error(
+                    f"Bad value for 'sep-len', expected number got: {config_data['sep-len']}"
+                )
         if sep_len is not None:
-            if sep_len < FileModifier.DELIM_MINLEN:
-                p.error(f"Separator length from '--sep-len' option must be >= {FileModifier.DELIM_MINLEN}")
+            if sep_len < TextFileModifier.DELIM_MINLEN:
+                p.error(
+                    f"Separator length from '--sep-len' option must be >= {TextFileModifier.DELIM_MINLEN}"
+                )
             kwargs["delim_len"] = sep_len
-        modifier = FileModifier(notice_text, **kwargs)
+        modifier = TextFileModifier(notice_text, **kwargs)
         modifier_func = modifier.remove if args.remove else modifier.replace
-        file_list = visit_files(finder, modifier_func)
+        file_list = visit_files(finder.files, modifier_func)
         plural = "s" if len(file_list) > 1 else ""
         tell_user(f"Modified {len(file_list)} file{plural}")
         if _log.isEnabledFor(logging.INFO):
             tell_user(f"Files: {', '.join(map(str, file_list))}")
+        # Jupyter
+        modifier = JupyterFileModifier(notice_text)
+        modifier_func = modifier.remove if args.remove else modifier.replace
+        file_list = visit_files(finder.notebooks, modifier_func)
+        plural = "s" if len(file_list) > 1 else ""
+        tell_user(f"Modified {len(file_list)} Jupyter notebook{plural}")
+        if _log.isEnabledFor(logging.INFO):
+            tell_user(f"Notebooks: {', '.join(map(str, file_list))}")
 
     return 0
 
