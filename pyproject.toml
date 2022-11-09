@@ -4,3 +4,46 @@ requires = [
     "wheel"
 ]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "addheader"
+readme = "README.md"
+version = "0.2.4"
+requires-python = ">=3.7"
+authors = [
+    {name="The IDAES Project"},
+    {name="Dan Gunter", email="dkgunter@lbl.gov"}
+]
+description = "A command to manage a header section for a source code tree"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: BSD License",
+    "Natural Language :: English",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: Unix",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = [
+    "pyyaml"
+]
+keywords = ["software engineering", "text processing", "utilities"]
+
+[project.urls]
+github = "https://github.com/idaes/addheader"
+issues = "https://github.com/idaes/addheader/issues"
+
+[project.optional-dependencies]
+jupyter = ["jupyter"]
+
+[project.scripts]
+addheader = "addheader.add:main"
