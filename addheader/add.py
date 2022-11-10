@@ -133,10 +133,7 @@ class FileFinder(object):
 
         # If Jupyter notebooks are enabled, add the Jupyter extension
         if jupyter_ext:
-            if "." not in jupyter_ext:  # raw 'ipynb' or whatever
-                self._jupyter_ext = "." + jupyter_ext
-            else: # e.g. _src.ipynb
-                self._jupyter_ext = jupyter_ext
+            self._jupyter_ext = jupyter_ext
             self._patterns["positive"].append(f"*{self._jupyter_ext}")
         else:
             self._jupyter_ext = None
@@ -408,8 +405,6 @@ class JupyterFileModifier(FileModifier):
                 cell["source"] = text_lines
                 if "hide-cell" not in tags:
                     tags.append("hide-cell")
-            # nb["cells"] = [cell] + cells[1:]
-            print(f"@@ replaced header for notebook '{path}'")
 
         # write back new notebook
         with path.open(mode="w", encoding="utf-8") as f:
@@ -456,11 +451,12 @@ def main() -> int:
         "-j",
         "--jupyter",
         action="store",
+        metavar="SUFFIX",
         nargs="?",
         default=None,
-        const="ipynb",
+        const=".ipynb",
         help="Also add/replace headers on Jupyter notebooks. The optional argument "
-        "is the extension to use in place of 'ipynb' for recognizing notebooks",
+        "is the filename suffix to use in place of '.ipynb' for recognizing notebooks",
     )
     p.add_argument(
         "-P",
@@ -602,7 +598,7 @@ def main() -> int:
         if "jupyter" in config_data:
             ext = config_data["jupyter"]
             if ext is True:
-                jupyter_ext = "ipynb"
+                jupyter_ext = ".ipynb"
             elif ext is False:
                 pass  # explicitly disabled
             else:
@@ -610,9 +606,10 @@ def main() -> int:
     else:
         jupyter_ext = args.jupyter
     if jupyter_ext:
-        _log.debug(f"Jupyter notebook extension: {jupyter_ext}")
+        _log.debug(f"Jupyter notebooks will be processed, suffix={jupyter_ext}")
     else:
-        print("@@ no jupyter ext")
+        _log.debug(f"Jupyter notebooks will not be processed")
+
 
     # Root
     if args.root:
