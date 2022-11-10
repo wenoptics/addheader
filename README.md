@@ -7,6 +7,9 @@ source code at once. The program replaces existing headers with
 an updated version, and places the header after any shell magic
 at the top of the file.
 
+As of version 0.3.0, Jupyter notebooks can also be handled.
+See Usage -> Adding headers to Jupyter Notebooks.
+
 ## Installation
 
 _addheader_ is written in Python and can be simply installed from the PyPI package:
@@ -27,6 +30,15 @@ then you would invoke the program like this:
 adddheader mypackage --text copyright.txt
 ```
 By default, the header will not be added to "__init__.py" files.
+
+### Additional actions
+
+If you want to see which files would be changed without modifying them, add
+`-n` or `--dry-run` to the command line arguments.
+If this argument is given, any arguments related to modifying or removing headers will be ignored.
+
+If you want to remove existing headers instead of adding or updating them,
+add `-r` or `--remove` to the command line arguments.
 
 ### Specifying file patterns
 
@@ -53,7 +65,7 @@ mypackage/{__init__.py, foo.py, bar.py}, mypackage/tests/{__init__.py, test_foo.
 mypackage/{foo.py, bar.py}, mypackage/tests/{test_foo.py, test_bar.py}
 * `addheader mypackage -t header.txt -p *.py -p ~__init__.py -p ~test_*.py`  
 mypackage/{foo.py, bar.py}
-  
+
 ### Header delimiters
 
 The header itself is, by default, delimited by a line of 78 '#' characters. While _detecting_ an existing
@@ -98,6 +110,49 @@ running `addheader mypackage --remove` after the above command will not
 remove anything, and `addheader mypackage -t myheader.txt` will insert a 
 second header (using the default comment character  and separator). To avoid
 passing command-line arguments every time, see the "Configuration" section.
+
+### Adding headers to Jupyter notebooks
+
+Starting in version 0.3.0, you can add headers to Jupyter Notebooks as well.
+To enable this, add a `-j` or `--jupyter` argument to the command-line, or
+similarly add a `jupyter: {suffix}` argument in the configuration file.
+
+The _{suffix}_ indicates an alternate file suffix to use for identifying
+whether a file is a Jupyter Notebook, where the default is ".ipynb".
+In the configuration file, use `jupyter: true` to use the default.
+On the command-line, simply omit the value to use the default.
+
+The file pattern arguments (see "Specifying file patterns", above) are still honored,
+but if Jupyter notebooks are enabled, the pattern `*{suffix}` will be automatically added
+ to the patterns to match. Thus, by default `*.ipynb` will be added to the files to match.
+
+The Jupyter notebook header will be placed in the first 'cell', i.e. the first
+item in the notebook, which will be of type "markdown" (i.e., non-code).
+The content of the header is the same as for text files, but without the 
+delimiters.
+Two tags will be added to the cell metadata:
+* `header` - Indicates this is the header cell, so it can be modified or removed later.
+* `hide-cell` - If you build documentation with Jupyterbook, this will hide the cell in the generated documentation behind a toggle button (see https://jupyterbook.org/interactive/hiding.html).
+
+Just as for text files, Jupyter notebook headers can be updated or removed.
+
+For reference, below is the form of the generated Jupyter notebook cell JSON:
+
+```json
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "tags": [
+          "header",
+          "hide-cell"
+        ]
+      },
+      "source": [
+        "Lines of the input text file",
+        "are copied into this array."
+      ]
+    }
+```
 
 ### Configuration
 To avoid passing commandline arguments every time, you can create a configuration
