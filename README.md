@@ -140,6 +140,7 @@ For reference, below is the form of the generated Jupyter notebook cell JSON:
 
 ```json
     {
+      "id": "ff7680061ca9429081cf6c9791d2a444",
       "cell_type": "markdown",
       "metadata": {
         "tags": [

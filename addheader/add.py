@@ -396,6 +396,7 @@ class JupyterFileModifier(FileModifier):
             text_lines = self._text.split("\n")
             if cell["cell_type"] != "markdown" or self._tag not in tags:
                 cell = {
+                    "id": uuid4().hex,
                     "cell_type": "markdown",
                     "metadata": {"tags": [self._tag, "hide-cell"]},
                     "source": text_lines
