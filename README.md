@@ -114,6 +114,11 @@ passing command-line arguments every time, see the "Configuration" section.
 ### Adding headers to Jupyter notebooks
 
 Starting in version 0.3.0, you can add headers to Jupyter Notebooks as well.
+
+> To enable Jupyter notebooks, you must
+> install the 'jupyter' optional dependencies, e.g.,
+> `pip install addheader[jupyter]`.
+
 To enable this, add a `-j {suffix}` or `--jupyter {suffix}` argument to the command-line, or
 similarly add a `jupyter: {suffix}` argument in the configuration file.
 The `{suffix}` indicates an alternate file suffix to use for identifying
@@ -134,7 +139,6 @@ The content of the header is the same as for text files.
 Two, optionally three, tags will be added to the cell metadata:
 * `header` - Indicates this is the header cell, so it can be modified or removed later.
 * `hide-cell` - If you build documentation with Jupyterbook, this will hide the cell in the generated documentation behind a toggle button (see https://jupyterbook.org/interactive/hiding.html).
-* `id` - To accommodate a change in more recent Jupyter Notebook formats, where an 'id' field is required in each cell, there is a `--jupyter-id` argument, and corresponding `jupyter_id` configuration file setting. By default these are false, meaning no 'id' will be added. Setting one or the other will add the 'id' to the header cell, including adding it on updates of existing headers.
 
 Just as for text files, Jupyter notebook headers can be updated or removed.
 

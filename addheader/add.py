@@ -62,6 +62,12 @@ from uuid import uuid4
 import yaml
 from yaml import Loader
 
+# For working with Jupyter notebooks
+try:
+    import nbformat
+except ImportError:
+    nbformat = None
+
 
 __author__ = "Dan Gunter (LBNL)"
 
@@ -165,6 +171,7 @@ class FileFinder(object):
     @property
     def notebooks(self):
         return self._jupyter_q
+
 
 def visit_files(files, func):
     visited = []
@@ -272,6 +279,7 @@ class FileModifier:
         """Return header lines as a list with \n at the end of each line."""
         return [s + "\n" for s in self._lines]
 
+
 class TextFileModifier(FileModifier):
     """Modify a file with a header."""
 
@@ -365,8 +373,9 @@ class JupyterFileModifier(FileModifier):
     DEFAULT_HEADER_TAG = "header"
     CELL_TYPE = "code"  # "markdown"
     HIDE_TAG = "hide-cell"
+    DEFAULT_VER = 4
 
-    def __init__(self, text: str, jupyter_id=False, **kwargs):
+    def __init__(self, text: str, ver: int = DEFAULT_VER, **kwargs):
         """Constructor.
 
         Args:
@@ -375,14 +384,14 @@ class JupyterFileModifier(FileModifier):
         """
         super().__init__(text, **kwargs)
         self._hdr_tag = self.DEFAULT_HEADER_TAG
-        self._id_field = jupyter_id
+        self._ver = ver
 
     def _process(self, path: Path, mode) -> bool:
         # read in notebook
         try:
             with path.open(mode="r", encoding="utf-8") as f:
-                nb = json.load(f)
-            cells = nb.get("cells", [])
+                nb = nbformat.read(f, as_version=self._ver)
+            cells = nb.cells
         except json.JSONDecodeError as err:
             _log.error(f"while parsing Jupyter notebook '{path}': {err}")
             return False
@@ -394,9 +403,11 @@ class JupyterFileModifier(FileModifier):
         # find header cell
         found_cell, found_index = None, -1
         for i, c in enumerate(cells):
-            if c.get("cell_type", "") == self.CELL_TYPE and \
-                "source" in c and \
-                    self._hdr_tag in c.get("metadata", {}).get("tags", []):
+            if (
+                c.get("cell_type", "") == self.CELL_TYPE
+                and "source" in c
+                and self._hdr_tag in c.get("metadata", {}).get("tags", [])
+            ):
                 found_cell, found_index = c, i
                 break
 
@@ -409,11 +420,6 @@ class JupyterFileModifier(FileModifier):
                 tags = found_cell["metadata"]["tags"]
                 if self.HIDE_TAG not in tags:
                     tags.append(self.HIDE_TAG)
-                # add required
-                if "execution_count" not in found_cell:
-                    found_cell["execution_count"] = 0
-                if self._id_field and "id" not in found_cell:
-                    found_cell["id"] = uuid4().hex
             else:  # remove
                 del nb["cells"][found_index]
         else:
@@ -421,15 +427,10 @@ class JupyterFileModifier(FileModifier):
                 return False
             elif mode == "replace":
                 # Put new cell at top
-                cell = {
-                    "cell_type": self.CELL_TYPE,
-                    "metadata": {"tags": [self._hdr_tag, self.HIDE_TAG]},
-                    "source": self.header_lines,
-                    "outputs": [],
-                    "execution_count": 0
-                }
-                if self._id_field:
-                    cell["id"] = uuid4().hex
+                new_cell = getattr(nbformat, f"v{self._ver}").new_code_cell
+                cell = new_cell(
+                    self.header_lines, metadata={"tags": [self._hdr_tag, self.HIDE_TAG]}
+                )
                 nb["cells"].insert(0, cell)
             else:
                 # no cell present, so nothing to do for detect/remove
@@ -437,7 +438,7 @@ class JupyterFileModifier(FileModifier):
 
         # write back new notebook
         with path.open(mode="w", encoding="utf-8") as f:
-            json.dump(nb, f, indent=2)
+            nbformat.write(nb, f, version=nbformat.NO_CONVERT)
 
         return bool(found_cell)
 
@@ -451,7 +452,9 @@ def tell_user(message):
     if not g_quiet:
         print(message)
 
+
 _file_count = 0
+
 
 def print_file(name):
     global _file_count
@@ -485,23 +488,26 @@ def main() -> int:
         "Prefix a pattern with '~' to take complement. "
         "(default = *.py, ~__init__.py)",
     )
-    p.add_argument(
-        "-j",
-        "--jupyter",
-        action="store",
-        metavar="SUFFIX",
-        nargs="?",
-        default=None,
-        const=".ipynb",
-        help="Also add/replace headers on Jupyter notebooks. The optional argument "
-        "is the filename suffix to use in place of '.ipynb' for recognizing notebooks",
-    )
-    p.add_argument(
-        "--jupyter-id",
-        action="store_true",
-        default=False,
-        help="If true, add the 'id' field to Jupyter cells"
-    )
+    if nbformat is not None:
+        p.add_argument(
+            "-j",
+            "--jupyter",
+            action="store",
+            metavar="SUFFIX",
+            nargs="?",
+            default=None,
+            const=".ipynb",
+            help="Also add/replace headers on Jupyter notebooks. The optional argument "
+            "is the filename suffix to use in place of '.ipynb' for recognizing notebooks",
+        )
+        p.add_argument(
+            "--notebook-version",
+            action="store",
+            default=JupyterFileModifier.DEFAULT_VER,
+            type=int,
+            help=f"Set Jupyter notebook format version "
+                 f"(default={JupyterFileModifier.DEFAULT_VER})",
+        )
     p.add_argument(
         "-P",
         "--path-exclude",
@@ -637,26 +643,32 @@ def main() -> int:
             p.error('bad pattern "{}": must be a filename, not a path'.format(pat))
 
     # Jupyter
-    jupyter_ext, jupyter_id = None, False
-    if args.jupyter is None:
-        if "jupyter" in config_data:
-            ext = config_data["jupyter"]
-            if ext is True:
-                jupyter_ext = ".ipynb"
-            elif ext is False:
-                pass  # explicitly disabled
-            else:
-                jupyter_ext = str(ext)
-    else:
-        jupyter_ext = args.jupyter
-    if jupyter_ext:
-        _log.debug(f"Jupyter notebooks will be processed, suffix={jupyter_ext}")
-        if args.jupyter_id is not None:
-            jupyter_id = args.jupyter_id
-        elif "jupyter_id" in config_data:
-            jupyter_id = config_data["jupyter_id"]
-    else:
-        _log.debug(f"Jupyter notebooks will not be processed")
+    jupyter_ext, nb_ver = None, None
+    if nbformat is not None:
+        if args.jupyter is None:
+            if "jupyter" in config_data:
+                ext = config_data["jupyter"]
+                if ext is True:
+                    jupyter_ext = ".ipynb"
+                elif ext is False:
+                    pass  # explicitly disabled
+                else:
+                    jupyter_ext = str(ext)
+        else:
+            jupyter_ext = args.jupyter
+        if jupyter_ext:
+            _log.debug(f"Jupyter notebooks will be processed, suffix={jupyter_ext}")
+            if args.notebook_version is not None:
+                nb_ver = args.notebook_version
+            elif "notebook_version" in config_data:
+                try:
+                    nb_ver = int(config_data["jupyter_ver"])
+                    if nb_ver < 1 or nb_ver > 4:
+                        raise ValueError("must be between 1 and 4")
+                except ValueError as err:
+                    p.error(f"Bad Jupyter notebook version: {err}")
+        else:
+            _log.debug(f"Jupyter notebooks will not be processed")
 
     # Root
     if args.root:
@@ -725,14 +737,15 @@ def main() -> int:
         if _log.isEnabledFor(logging.INFO):
             tell_user(f"Files: {', '.join(map(str, file_list))}")
         # Jupyter
-        modifier = JupyterFileModifier(notice_text, jupyter_id=jupyter_id)
-        modifier_func = modifier.remove if args.remove else modifier.replace
-        file_list = visit_files(finder.notebooks, modifier_func)
-        if file_list:
-            plural = "s" if len(file_list) > 1 else ""
-            tell_user(f"Modified {len(file_list)} Jupyter notebook{plural}")
-            if _log.isEnabledFor(logging.INFO):
-                tell_user(f"Notebooks: {', '.join(map(str, file_list))}")
+        if jupyter_ext:
+            modifier = JupyterFileModifier(notice_text, ver=nb_ver)
+            modifier_func = modifier.remove if args.remove else modifier.replace
+            file_list = visit_files(finder.notebooks, modifier_func)
+            if file_list:
+                plural = "s" if len(file_list) > 1 else ""
+                tell_user(f"Modified {len(file_list)} Jupyter notebook{plural}")
+                if _log.isEnabledFor(logging.INFO):
+                    tell_user(f"Notebooks: {', '.join(map(str, file_list))}")
 
     return 0
 

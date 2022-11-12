@@ -43,7 +43,7 @@ github = "https://github.com/idaes/addheader"
 issues = "https://github.com/idaes/addheader/issues"
 
 [project.optional-dependencies]
-jupyter = ["jupyter"]
+jupyter = ["nbformat"]
 
 [project.scripts]
 addheader = "addheader.add:main"
