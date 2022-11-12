@@ -114,34 +114,37 @@ passing command-line arguments every time, see the "Configuration" section.
 ### Adding headers to Jupyter notebooks
 
 Starting in version 0.3.0, you can add headers to Jupyter Notebooks as well.
-To enable this, add a `-j` or `--jupyter` argument to the command-line, or
+To enable this, add a `-j {suffix}` or `--jupyter {suffix}` argument to the command-line, or
 similarly add a `jupyter: {suffix}` argument in the configuration file.
-
-The _{suffix}_ indicates an alternate file suffix to use for identifying
+The `{suffix}` indicates an alternate file suffix to use for identifying
 whether a file is a Jupyter Notebook, where the default is ".ipynb".
 In the configuration file, use `jupyter: true` to use the default.
-On the command-line, simply omit the value to use the default.
+On the command-line, omit the value to use the default.
 
-The file pattern arguments (see "Specifying file patterns", above) are still honored,
+The file pattern arguments (see *Specifying file patterns*, above) are still honored,
 but if Jupyter notebooks are enabled, the pattern `*{suffix}` will be automatically added
  to the patterns to match. Thus, by default `*.ipynb` will be added to the files to match.
 
-The Jupyter notebook header will be placed in the first 'cell', i.e. the first
-item in the notebook, which will be of type "markdown" (i.e., non-code).
-The content of the header is the same as for text files, but without the 
-delimiters.
-Two tags will be added to the cell metadata:
+If there is no existing header, the Jupyter notebook header will be inserted as the first 'cell', i.e. the first
+item, in the notebook. An existing header will be found anywhere in the notebook (by its `header` tag, see below).
+
+Currently the header cell is of type "code", with every line of the cell
+commented (using a 'markdown' cell is another possibility, but the code cell is friendler to the Jupyterbook machinery, and also retains the header in exported versions of the notebook without markdown cells).
+The content of the header is the same as for text files.
+Two, optionally three, tags will be added to the cell metadata:
 * `header` - Indicates this is the header cell, so it can be modified or removed later.
 * `hide-cell` - If you build documentation with Jupyterbook, this will hide the cell in the generated documentation behind a toggle button (see https://jupyterbook.org/interactive/hiding.html).
+* `id` - To accommodate a change in more recent Jupyter Notebook formats, where an 'id' field is required in each cell, there is a `--jupyter-id` argument, and corresponding `jupyter_id` configuration file setting. By default these are false, meaning no 'id' will be added. Setting one or the other will add the 'id' to the header cell, including adding it on updates of existing headers.
 
 Just as for text files, Jupyter notebook headers can be updated or removed.
 
-For reference, below is the form of the generated Jupyter notebook cell JSON:
+
+For reference, below is the form of the generated Jupyter notebook cell JSON (with the 'id' field):
 
 ```json
-    {
-      "id": "ff7680061ca9429081cf6c9791d2a444",
-      "cell_type": "markdown",
+   {
+      "id": "1234567890abcdef1234567890abcdef",
+      "cell_type": "code",
       "metadata": {
         "tags": [
           "header",
@@ -149,9 +152,10 @@ For reference, below is the form of the generated Jupyter notebook cell JSON:
         ]
       },
       "source": [
-        "Lines of the input text file",
-        "are copied into this array."
-      ]
+        "# Copyright info\n",
+        "# is placed here.\n"
+      ],
+      "outputs": []
     }
 ```
 

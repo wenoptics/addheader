@@ -25,6 +25,7 @@ import sys
 import pytest
 import addheader
 from addheader import add
+import json
 
 
 class SetArgv:
@@ -42,54 +43,120 @@ class SetArgv:
 def _make_source_tree(root):
     """Create this source tree::
 
-        mypackage
+    mypackage
+        __init__.py
+        foo.py
+        bar.py
+        tests/
             __init__.py
-            foo.py
-            bar.py
-            tests/
-                __init__.py
-                test_foo.py
-                test_bar.py
+            test_foo.py
+            test_bar.py
+        nb/
+            foo_hdr.ipynb
+            foo_nohdr.ipynb
     """
     package = root / "mypackage"
     package.mkdir()
     for f in ("__init__.py", "foo.py", "bar.py"):
         fp = (package / f).open("w")
         if f[0] != "_":
-            fp.write("# Comment at top\n"
-                     "import sys\n"
-                     "\n"
-                     "print('Hello, World!')\n")
+            fp.write(
+                "# Comment at top\n" "import sys\n" "\n" "print('Hello, World!')\n"
+            )
     tests = package / "tests"
     tests.mkdir()
     for f in ("__init__.py", "test_foo.py", "test_bar.py"):
         (tests / f).open("w")
 
+    nb_main = """
+    "metadata": {
+      "celltoolbar": "Tags",
+      "kernelspec": {
+       "display_name": "Python 3 (ipykernel)",
+       "language": "python",
+       "name": "python3"
+      },
+      "language_info": {
+       "codemirror_mode": {
+        "name": "ipython",
+        "version": 3
+       },
+       "file_extension": ".py",
+       "mimetype": "text/x-python",
+       "name": "python",
+       "nbconvert_exporter": "python",
+       "pygments_lexer": "ipython3",
+       "version": "3.8.12"
+      }
+     },
+     "nbformat": 4,
+     "nbformat_minor": 4
+    }
+    """
+    nb = package / "nb"
+    nb.mkdir()
+    for f in ("foo_hdr.ipynb", "foo_nohdr.ipynb"):
+        fp = (nb / f).open("w")
+        if "nohdr" in f:
+            fp.write(
+                """{ "cells": [{
+                  "id": "1234567890abcdef1234567890abcdef",
+                  "cell_type": "code",
+                  "metadata": {},
+                  "source": ["a = 2"],
+                  "outputs": []
+                }], """
+                + nb_main
+            )
+        else:
+            fp.write(
+                """{ "cells": [{
+              "id": "1234567890abcdef1234567890abcdef",
+              "cell_type": "code",
+              "metadata": {
+                "tags": [
+                  "hide-cell"
+                ]
+              },
+              "source": [
+                "# Copyright info\\n",
+                "# is placed here.\\n"
+              ],
+              "outputs": []
+            }], """
+                + nb_main
+            )
+
 
 def test_file_finder(tmp_path):
     _make_source_tree(tmp_path)
     root = str(tmp_path.resolve())
-    ff = add.FileFinder(root, glob_patterns=["*"])
+    ff = add.FileFinder(root, glob_patterns=["*.*"])
+    print(f"Found: Text={ff.files} Notebooks={ff.notebooks}")
     assert len(ff) == 8
     ff = add.FileFinder(root, glob_patterns=["*.py", "~test_*.py", "~__init__.py"])
     assert len(ff) == 2
+    ff = add.FileFinder(root, glob_patterns=["*.ipynb"])
+    assert len(ff) == 2
 
 
-def test_file_modifier(tmp_path):
+def test_text_file_modifier(tmp_path):
     _make_source_tree(tmp_path)
     root = str(tmp_path.resolve())
     ff = add.FileFinder(root, glob_patterns=["*.py", "~test_*.py", "~__init__.py"])
     assert len(ff) == 2
-    fm = add.FileModifier("""
+    fm = add.TextFileModifier(
+        """
     Header for
-    all the files""")
+    all the files"""
+    )
     # add header to files
-    for f in ff:
+    for f in ff.files:
         detected = fm.replace(f)
         assert not detected
     ff.reset()
     # make sure on second pass nothing changes
-    for f in ff:
+    for f in ff.files:
         old_text = open(f).read()
         detected = fm.replace(f)
         assert detected
@@ -97,11 +164,39 @@ def test_file_modifier(tmp_path):
         assert old_text == new_text
 
 
+def test_jupyter_file_modifier(tmp_path):
+    _make_source_tree(tmp_path)
+    root = str(tmp_path.resolve())
+    ff = add.FileFinder(root, glob_patterns=[], jupyter_ext=".ipynb")
+    assert len(ff) == 2
+    fm = add.JupyterFileModifier(
+        """
+    Header for
+    all the files"""
+    )
+    # add header to files
+    for f in ff.notebooks:
+        print(f"Add header to file: {f.name}")
+        detected = fm.replace(f)
+        assert not detected
+    ff.reset()
+    # make sure on second pass nothing changes
+    for f in ff.notebooks:
+        print(f"Input notebook:\n{open(f).read()}")
+        nb = json.load(open(f))
+        detected = fm.replace(f)
+        assert detected
+        nb2 = json.load(open(f))
+        assert nb == nb2
+
+
 def test_detect_files(tmp_path):
     _make_source_tree(tmp_path)
     root = str(tmp_path.resolve())
     # only foo
-    ff = add.FileFinder(root, glob_patterns=["*.py", "~bar.py", "~test_*.py", "~__init__.py"])
+    ff = add.FileFinder(
+        root, glob_patterns=["*.py", "~bar.py", "~test_*.py", "~__init__.py"]
+    )
     assert len(ff) == 1
     has_header, no_header = add.detect_files(ff)
     assert len(has_header) == 0
@@ -110,6 +205,7 @@ def test_detect_files(tmp_path):
 
 def test_headers():
     import os
+
     root = os.path.dirname(addheader.__file__)
     ff = addheader.add.FileFinder(root, glob_patterns=["*.py", "~__init__.py"])
     has_header, missing_header = addheader.add.detect_files(ff)
@@ -119,8 +215,7 @@ def test_headers():
 def test_cli(tmp_path):
     _make_source_tree(tmp_path)
     with (tmp_path / "license.txt").open("w") as f:
-        f.write("Sample license\n"
-                "With some sample text\n")
+        f.write("Sample license\n" "With some sample text\n")
     root, text = str(tmp_path / "mypackage"), str(tmp_path / "license.txt")
     with SetArgv(root, "-t", text):
         addheader.add.main()
@@ -130,5 +225,5 @@ def test_cli(tmp_path):
         addheader.add.main()
     with SetArgv(root, "-t", text, "--sep", "=", "--comment", "//", "--sep-len", "80"):
         addheader.add.main()
-
-
+    with SetArgv(root, "-t", text, "--jupyter"):
+        addheader.add.main()

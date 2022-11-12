@@ -30,7 +30,7 @@ of comment characters, then the notice will be inserted. Likewise, the
 a line that is not commented.
 
 For example, in the following the notice will be inserted between the
-second and third lines::
+second and third header_lines::
 
     #!/usr/bin/env python
     # hello
@@ -73,25 +73,6 @@ _h.setFormatter(
 _log.addHandler(_h)
 
 DEFAULT_CONF = "addheader.cfg"
-
-
-def visit_files(finder, func):
-    visited = []
-    for f in finder:
-        func(f)
-        visited.append(f)
-    return visited
-
-
-def detect_files(finder):
-    modifier = TextFileModifier()  # text is irrelevant
-    has_header, no_header = [], []
-    for f in finder:
-        if modifier.detect(f):
-            has_header.append(f)
-        else:
-            no_header.append(f)
-    return has_header, no_header
 
 
 class FileFinder(object):
@@ -150,7 +131,8 @@ class FileFinder(object):
 
     def __len__(self):
         jn = len(self._jupyter_q) if self._jupyter_q else 0
-        return len(self._q) + jn
+        tn = len(self._q)
+        return tn + jn
 
     def _find(self, pattern: str):
         """Recursively find all files matching glob 'pattern' from `self._root`
@@ -184,8 +166,68 @@ class FileFinder(object):
     def notebooks(self):
         return self._jupyter_q
 
+def visit_files(files, func):
+    visited = []
+    if files:
+        for f in files:
+            func(f)
+            visited.append(f)
+    return visited
+
+
+def detect_files(finder: FileFinder):
+    modifier = TextFileModifier()  # text is irrelevant
+    has_header, no_header = [], []
+    for f in finder.files:
+        if modifier.detect(f):
+            has_header.append(f)
+        else:
+            no_header.append(f)
+    if finder.notebooks:
+        modifier = JupyterFileModifier()
+        for f in finder.notebooks:
+            if modifier.detect(f):
+                has_header.append(f)
+            else:
+                no_header.append(f)
+    return has_header, no_header
+
 
 class FileModifier:
+
+    EMPTY_TEXT = "..."  # text used if none is given
+    DEFAULT_COMMENT = "#"
+    DEFAULT_DELIM_CHAR = "#"
+    DEFAULT_DELIM_LEN = 78
+    DELIM_MINLEN = 10
+
+    def __init__(
+        self,
+        text: str = None,
+        comment_prefix=DEFAULT_COMMENT,
+        delim_char=DEFAULT_DELIM_CHAR,
+        delim_len=DEFAULT_DELIM_LEN,
+    ):
+        """Constructor.
+
+        Args:
+            text: Text to place in header. Ignore for remove and detect functions.
+            comment_prefix: Character(s) the start of a line that indicates a comment
+            delim_char: Character to repeat for the delimiter line
+            delim_len: Number of `delim_char` characters to put together to make a delimiter line
+        """
+        self._pfx = comment_prefix
+        self._sep = comment_prefix + delim_char * delim_len
+        self._minsep = comment_prefix + delim_char * self.DELIM_MINLEN
+        if text is None:
+            text = self.EMPTY_TEXT
+        # break text into lines and prefix each
+        lines = [l.strip() for l in text.split("\n")]
+        self._lines = [f"{self._pfx} {line}".strip() for line in lines]
+        # frame lines with separator
+        self._lines.insert(0, self._sep)
+        self._lines.append(self._sep)
+
     def replace(self, path: Path):
         """Modify header in the file at 'path'.
 
@@ -222,41 +264,30 @@ class FileModifier:
         _log.debug(f"Detect header in file: {path}")
         return self._process(path, mode="detect")
 
+    def _write_header(self, outfile):
+        outfile.write("\n".join(self._lines) + "\n")
+
+    @property
+    def header_lines(self):
+        """Return header lines as a list with \n at the end of each line."""
+        return [s + "\n" for s in self._lines]
 
 class TextFileModifier(FileModifier):
     """Modify a file with a header."""
 
-    DEFAULT_COMMENT = "#"
-    DEFAULT_DELIM_CHAR = "#"
-    DEFAULT_DELIM_LEN = 78
-    DELIM_MINLEN = 10
-    # File 'magic' allowed in first two lines before comment
+    # File 'magic' allowed in first two header_lines before comment
     magic_expr = re.compile(
         r"^[ \t\f]*#" "(.*?coding[:=][ \t]*[-_.a-zA-Z0-9]+|" "!/.*)"
     )
 
-    def __init__(
-        self,
-        text: str = None,
-        comment_prefix=DEFAULT_COMMENT,
-        delim_char=DEFAULT_DELIM_CHAR,
-        delim_len=DEFAULT_DELIM_LEN,
-    ):
+    def __init__(self, text: str = None, **kwargs):
         """Constructor.
 
         Args:
             text: Text to place in header. Ignore for remove and detect functions.
-            comment_prefix: Character(s) the start of a line that indicates a comment
-            delim_char: Character to repeat for the delimiter line
-            delim_len: Number of `delim_char` characters to put together to make a delimiter line
+            kwargs: See superclass
         """
-        self._pfx = comment_prefix
-        self._sep = comment_prefix + delim_char * delim_len
-        self._minsep = comment_prefix + delim_char * self.DELIM_MINLEN
-        if text is None:
-            text = "..."
-        lines = [l.strip() for l in text.split("\n")]
-        self._txt = "\n".join([f"{self._pfx} {line}".strip() for line in lines])
+        super().__init__(text, **kwargs)
 
     def _process(self, path, mode) -> bool:
         # move input file to <name>.orig
@@ -303,7 +334,7 @@ class TextFileModifier(FileModifier):
                         detected = True
                         state = "post"
                 elif state == "post":
-                    # replace/remove both copy all lines after header
+                    # replace/remove both copy all header_lines after header
                     if mode != "detect":
                         out.write(line)
                 lineno += 1
@@ -327,91 +358,88 @@ class TextFileModifier(FileModifier):
             os.unlink(wfname)
         return detected
 
-    def _write_header(self, outfile):
-        outfile.write(self._sep)
-        outfile.write("\n")
-        outfile.write(self._txt)
-        outfile.write("\n")
-        outfile.write(self._sep)
-        outfile.write("\n")
-
 
 class JupyterFileModifier(FileModifier):
     """Modify a Jupyter notebook with a header."""
 
     DEFAULT_HEADER_TAG = "header"
+    CELL_TYPE = "code"  # "markdown"
+    HIDE_TAG = "hide-cell"
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, jupyter_id=False, **kwargs):
         """Constructor.
 
         Args:
             text: Text to place in header. Ignore for remove and detect functions.
-            delim_char: Character to repeat for the delimiter line
-            delim_len: Number of `delim_char` characters to put together to make a delimiter line
+            kwargs: See superclass
         """
-        self._text = text
-        self._tag = self.DEFAULT_HEADER_TAG
+        super().__init__(text, **kwargs)
+        self._hdr_tag = self.DEFAULT_HEADER_TAG
+        self._id_field = jupyter_id
 
     def _process(self, path: Path, mode) -> bool:
         # read in notebook
         try:
             with path.open(mode="r", encoding="utf-8") as f:
                 nb = json.load(f)
-            cells = nb["cells"]
+            cells = nb.get("cells", [])
         except json.JSONDecodeError as err:
             _log.error(f"while parsing Jupyter notebook '{path}': {err}")
             return False
-        except KeyError:
-            _log.error(f"bad format for Jupyter notebook '{path}': no 'cells'")
-            return False
 
-        # get first cell
         if len(cells) == 0:
             _log.error(f"Jupyter notebook is empty")
             return False
-        cell = cells[0]
-        if cell["cell_type"] != "markdown":
-            if mode != "replace":
-                return False
-        try:
-            meta = cell["metadata"]
-        except KeyError:
-            _log.error(
-                f"bad format for Jupyter notebook '{path}': missing 'metadata' in cell"
-            )
-            return False
 
-        # check that special tag is in the cell metadata tags
-        tags = meta.get("tags", [])
-        if self._tag not in tags:
-            if mode != "replace":
-                return False
+        # find header cell
+        found_cell, found_index = None, -1
+        for i, c in enumerate(cells):
+            if c.get("cell_type", "") == self.CELL_TYPE and \
+                "source" in c and \
+                    self._hdr_tag in c.get("metadata", {}).get("tags", []):
+                found_cell, found_index = c, i
+                break
 
-        # perform action
-        if mode == "detect":
-            return True  # nothing more to do
-        if mode == "remove":
-            nb["cells"] = cells[1:]
-        elif mode == "replace":
-            text_lines = self._text.split("\n")
-            if cell["cell_type"] != "markdown" or self._tag not in tags:
+        if found_cell:
+            if mode == "detect":
+                return True  # nothing more to do
+            elif mode == "replace":
+                # Replace text in cell (and fix up tags if needed)
+                found_cell["source"] = self.header_lines
+                tags = found_cell["metadata"]["tags"]
+                if self.HIDE_TAG not in tags:
+                    tags.append(self.HIDE_TAG)
+                # add required
+                if "execution_count" not in found_cell:
+                    found_cell["execution_count"] = 0
+                if self._id_field and "id" not in found_cell:
+                    found_cell["id"] = uuid4().hex
+            else:  # remove
+                del nb["cells"][found_index]
+        else:
+            if mode == "detect":
+                return False
+            elif mode == "replace":
+                # Put new cell at top
                 cell = {
-                    "id": uuid4().hex,
-                    "cell_type": "markdown",
-                    "metadata": {"tags": [self._tag, "hide-cell"]},
-                    "source": text_lines
+                    "cell_type": self.CELL_TYPE,
+                    "metadata": {"tags": [self._hdr_tag, self.HIDE_TAG]},
+                    "source": self.header_lines,
+                    "outputs": [],
+                    "execution_count": 0
                 }
+                if self._id_field:
+                    cell["id"] = uuid4().hex
                 nb["cells"].insert(0, cell)
             else:
-                cell["source"] = text_lines
-                if "hide-cell" not in tags:
-                    tags.append("hide-cell")
+                # no cell present, so nothing to do for detect/remove
+                return False
 
         # write back new notebook
         with path.open(mode="w", encoding="utf-8") as f:
             json.dump(nb, f, indent=2)
 
-        return True
+        return bool(found_cell)
 
 
 # CLI usage
@@ -422,6 +450,15 @@ g_quiet = False
 def tell_user(message):
     if not g_quiet:
         print(message)
+
+_file_count = 0
+
+def print_file(name):
+    global _file_count
+    if _file_count == 0:
+        print("Files:")
+    _file_count += 1
+    print(f"{_file_count:3d} {name}")
 
 
 def main() -> int:
@@ -458,6 +495,12 @@ def main() -> int:
         const=".ipynb",
         help="Also add/replace headers on Jupyter notebooks. The optional argument "
         "is the filename suffix to use in place of '.ipynb' for recognizing notebooks",
+    )
+    p.add_argument(
+        "--jupyter-id",
+        action="store_true",
+        default=False,
+        help="If true, add the 'id' field to Jupyter cells"
     )
     p.add_argument(
         "-P",
@@ -563,10 +606,10 @@ def main() -> int:
         text_file = None
     if args.remove:
         if text_file is not None:
-            tell_user(f"-r/--remove option given so text '{text_file}' will be ignored")
+            _log.info(f"-r/--remove option given so text '{text_file}' will be ignored")
     elif args.dry:
         if text_file is not None:
-            tell_user(
+            _log.info(
                 f"-n/--dry-run option given so text '{text_file}' will be ignored"
             )
     else:
@@ -594,7 +637,7 @@ def main() -> int:
             p.error('bad pattern "{}": must be a filename, not a path'.format(pat))
 
     # Jupyter
-    jupyter_ext = None
+    jupyter_ext, jupyter_id = None, False
     if args.jupyter is None:
         if "jupyter" in config_data:
             ext = config_data["jupyter"]
@@ -608,9 +651,12 @@ def main() -> int:
         jupyter_ext = args.jupyter
     if jupyter_ext:
         _log.debug(f"Jupyter notebooks will be processed, suffix={jupyter_ext}")
+        if args.jupyter_id is not None:
+            jupyter_id = args.jupyter_id
+        elif "jupyter_id" in config_data:
+            jupyter_id = config_data["jupyter_id"]
     else:
         _log.debug(f"Jupyter notebooks will not be processed")
-
 
     # Root
     if args.root:
@@ -643,9 +689,8 @@ def main() -> int:
 
     # Find and replace files
     if args.dry:
-        file_list = visit_files(finder, tell_user)
-        plural = "s" if len(file_list) > 1 else ""
-        tell_user(f"Found {len(file_list)} file{plural}")
+        visit_files(finder.files, print_file)
+        visit_files(finder.notebooks, print_file)
     else:
         kwargs = {}
         if args.comment:
@@ -676,17 +721,18 @@ def main() -> int:
         modifier_func = modifier.remove if args.remove else modifier.replace
         file_list = visit_files(finder.files, modifier_func)
         plural = "s" if len(file_list) > 1 else ""
-        tell_user(f"Modified {len(file_list)} file{plural}")
+        tell_user(f"Modified {len(file_list)} source file{plural}")
         if _log.isEnabledFor(logging.INFO):
             tell_user(f"Files: {', '.join(map(str, file_list))}")
         # Jupyter
-        modifier = JupyterFileModifier(notice_text)
+        modifier = JupyterFileModifier(notice_text, jupyter_id=jupyter_id)
         modifier_func = modifier.remove if args.remove else modifier.replace
         file_list = visit_files(finder.notebooks, modifier_func)
-        plural = "s" if len(file_list) > 1 else ""
-        tell_user(f"Modified {len(file_list)} Jupyter notebook{plural}")
-        if _log.isEnabledFor(logging.INFO):
-            tell_user(f"Notebooks: {', '.join(map(str, file_list))}")
+        if file_list:
+            plural = "s" if len(file_list) > 1 else ""
+            tell_user(f"Modified {len(file_list)} Jupyter notebook{plural}")
+            if _log.isEnabledFor(logging.INFO):
+                tell_user(f"Notebooks: {', '.join(map(str, file_list))}")
 
     return 0
 
