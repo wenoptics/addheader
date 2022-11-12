@@ -126,6 +126,9 @@ whether a file is a Jupyter Notebook, where the default is ".ipynb".
 In the configuration file, use `jupyter: true` to use the default.
 On the command-line, omit the value to use the default.
 
+To set the Jupyter notebook format version, add `--notebook-version {value}` to the command-line or,  equivalently, `notebook_version: {value}` to the configuration file.
+Values can be from 1 to 4. The default value is 4.
+
 The file pattern arguments (see *Specifying file patterns*, above) are still honored,
 but if Jupyter notebooks are enabled, the pattern `*{suffix}` will be automatically added
  to the patterns to match. Thus, by default `*.ipynb` will be added to the files to match.
