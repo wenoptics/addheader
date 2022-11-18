@@ -108,8 +108,14 @@ Keep in mind that subsequent operations on files with this header, including
 arguments so that the header can be properly identified. For example,
 running `addheader mypackage --remove` after the above command will not
 remove anything, and `addheader mypackage -t myheader.txt` will insert a 
-second header (using the default comment character  and separator). To avoid
-passing command-line arguments every time, see the "Configuration" section.
+second header (using the default comment character  and separator). 
+
+You can control whether the final line has a newline character appended with the `--final-linesep` command-line option (or the `final_linesep` configuration option). This is True by default for text files, but False for Jupyter notebooks. The logic is that Jupyter notebook headers are in their own cell -- and also, this avoids spurious modifications by the Black code reformatter.
+
+> To avoid
+passing command-line arguments every time, 
+> use the configuration file.
+> See the "Configuration" section for more details.
 
 ### Adding headers to Jupyter notebooks
 

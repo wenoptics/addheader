@@ -207,6 +207,7 @@ class FileModifier:
     DEFAULT_DELIM_CHAR = "#"
     DEFAULT_DELIM_LEN = 78
     DELIM_MINLEN = 10
+    LINESEP = "\n"
 
     def __init__(
         self,
@@ -214,6 +215,7 @@ class FileModifier:
         comment_prefix=DEFAULT_COMMENT,
         delim_char=DEFAULT_DELIM_CHAR,
         delim_len=DEFAULT_DELIM_LEN,
+        add_trailing_linesep = True
     ):
         """Constructor.
 
@@ -223,13 +225,14 @@ class FileModifier:
             delim_char: Character to repeat for the delimiter line
             delim_len: Number of `delim_char` characters to put together to make a delimiter line
         """
+        self._trail = add_trailing_linesep
         self._pfx = comment_prefix
         self._sep = comment_prefix + delim_char * delim_len
         self._minsep = comment_prefix + delim_char * self.DELIM_MINLEN
         if text is None:
             text = self.EMPTY_TEXT
         # break text into lines and prefix each
-        lines = [l.strip() for l in text.split("\n")]
+        lines = [l.strip() for l in text.split(self.LINESEP)]
         self._lines = [f"{self._pfx} {line}".strip() for line in lines]
         # frame lines with separator
         self._lines.insert(0, self._sep)
@@ -272,12 +275,15 @@ class FileModifier:
         return self._process(path, mode="detect")
 
     def _write_header(self, outfile):
-        outfile.write("\n".join(self._lines) + "\n")
+        outfile.write(self.LINESEP.join(self._lines) + ("", self.LINESEP)[self._trail])
 
     @property
     def header_lines(self):
-        """Return header lines as a list with \n at the end of each line."""
-        return [s + "\n" for s in self._lines]
+        """Return header lines as a list with '\n' separating each line."""
+        if self._trail:
+            return [s + self.LINESEP for s in self._lines]
+        else:
+            return [s + self.LINESEP for s in self._lines[:-1]] + [self._lines[-1]]
 
 
 class TextFileModifier(FileModifier):
@@ -544,6 +550,13 @@ def main() -> int:
         help=f"Separator length (default={TextFileModifier.DEFAULT_DELIM_LEN})",
     )
     p.add_argument(
+        "--final-linesep",
+        action="store_true",
+        default=True,
+        help="Put a line separator after the last line, as well. The default is "
+             "True for text files and False for Jupyter notebooks."
+    )
+    p.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -670,6 +683,15 @@ def main() -> int:
         else:
             _log.debug(f"Jupyter notebooks will not be processed")
 
+    # Trailing line separator
+    if args.final_linesep:
+        trailing_sep = args.final_linesep
+    elif "final_linesep" in config_data:
+        trailing_sep = config_data["final_linesep"]
+    else:
+        # Turn off trailing separators for jupyter notebooks by default
+        trailing_sep = not jupyter_ext
+
     # Root
     if args.root:
         root_dir = args.root
@@ -689,7 +711,7 @@ def main() -> int:
             root_dir,
             glob_patterns=patterns,
             path_exclude=path_exclude,
-            jupyter_ext=jupyter_ext,
+            jupyter_ext=jupyter_ext
         )
     except Exception as err:
         p.error(f"Finding files: {err}")
@@ -729,6 +751,7 @@ def main() -> int:
                     f"Separator length from '--sep-len' option must be >= {TextFileModifier.DELIM_MINLEN}"
                 )
             kwargs["delim_len"] = sep_len
+        kwargs["add_trailing_linesep"] = trailing_sep
         modifier = TextFileModifier(notice_text, **kwargs)
         modifier_func = modifier.remove if args.remove else modifier.replace
         file_list = visit_files(finder.files, modifier_func)

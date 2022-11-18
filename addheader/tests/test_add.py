@@ -172,7 +172,7 @@ def test_jupyter_file_modifier(tmp_path):
     fm = add.JupyterFileModifier(
         """
     Header for
-    all the files"""
+    all the files""", add_trailing_linesep=False
     )
     # add header to files
     for f in ff.notebooks:
@@ -180,7 +180,8 @@ def test_jupyter_file_modifier(tmp_path):
         detected = fm.replace(f)
         assert not detected
     ff.reset()
-    # make sure on second pass nothing changes
+    # make sure on second pass header is correct,
+    # and nothing changes when trying to re-add it
     for f in ff.notebooks:
         print(f"Input notebook:\n{open(f).read()}")
         nb = json.load(open(f))
@@ -188,6 +189,11 @@ def test_jupyter_file_modifier(tmp_path):
         assert detected
         nb2 = json.load(open(f))
         assert nb == nb2
+        # check contents
+        text = nb["cells"][0]["source"]
+        assert len(text) > 3
+        assert text[0].endswith(add.FileModifier.LINESEP)
+        assert not text[-1].endswith(add.FileModifier.LINESEP)
 
 
 def test_detect_files(tmp_path):
@@ -227,3 +233,19 @@ def test_cli(tmp_path):
         addheader.add.main()
     with SetArgv(root, "-t", text, "--jupyter"):
         addheader.add.main()
+
+
+def test_file_modifier():
+    fm = add.FileModifier("hello, world!")
+    hlines = fm.header_lines
+    assert len(hlines) == 3
+    assert hlines[0].endswith("\n")
+    assert hlines[1].endswith("\n")
+    assert hlines[2].endswith("\n")
+
+    fm = add.FileModifier("hello, world!", add_trailing_linesep=False)
+    hlines = fm.header_lines
+    assert len(hlines) == 3
+    assert hlines[0].endswith("\n")
+    assert hlines[1].endswith("\n")
+    assert not hlines[2].endswith("\n")
