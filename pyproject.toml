@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "addheader"
 readme = "README.md"
-version = "0.2.4"
+version = "0.3.0"
 requires-python = ">=3.7"
 authors = [
     {name="The IDAES Project"},
@@ -43,7 +43,7 @@ github = "https://github.com/idaes/addheader"
 issues = "https://github.com/idaes/addheader/issues"
 
 [project.optional-dependencies]
-jupyter = ["jupyter"]
+jupyter = ["nbformat"]
 
 [project.scripts]
 addheader = "addheader.add:main"

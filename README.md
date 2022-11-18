@@ -7,6 +7,9 @@ source code at once. The program replaces existing headers with
 an updated version, and places the header after any shell magic
 at the top of the file.
 
+As of version 0.3.0, Jupyter notebooks can also be handled.
+See Usage -> Adding headers to Jupyter Notebooks.
+
 ## Installation
 
 _addheader_ is written in Python and can be simply installed from the PyPI package:
@@ -27,6 +30,15 @@ then you would invoke the program like this:
 adddheader mypackage --text copyright.txt
 ```
 By default, the header will not be added to "__init__.py" files.
+
+### Additional actions
+
+If you want to see which files would be changed without modifying them, add
+`-n` or `--dry-run` to the command line arguments.
+If this argument is given, any arguments related to modifying or removing headers will be ignored.
+
+If you want to remove existing headers instead of adding or updating them,
+add `-r` or `--remove` to the command line arguments.
 
 ### Specifying file patterns
 
@@ -53,7 +65,7 @@ mypackage/{__init__.py, foo.py, bar.py}, mypackage/tests/{__init__.py, test_foo.
 mypackage/{foo.py, bar.py}, mypackage/tests/{test_foo.py, test_bar.py}
 * `addheader mypackage -t header.txt -p *.py -p ~__init__.py -p ~test_*.py`  
 mypackage/{foo.py, bar.py}
-  
+
 ### Header delimiters
 
 The header itself is, by default, delimited by a line of 78 '#' characters. While _detecting_ an existing
@@ -96,8 +108,69 @@ Keep in mind that subsequent operations on files with this header, including
 arguments so that the header can be properly identified. For example,
 running `addheader mypackage --remove` after the above command will not
 remove anything, and `addheader mypackage -t myheader.txt` will insert a 
-second header (using the default comment character  and separator). To avoid
-passing command-line arguments every time, see the "Configuration" section.
+second header (using the default comment character  and separator). 
+
+You can control whether the final line has a newline character appended with the `--final-linesep` command-line option (or the `final_linesep` configuration option). This is True by default for text files, but False for Jupyter notebooks. The logic is that Jupyter notebook headers are in their own cell -- and also, this avoids spurious modifications by the Black code reformatter.
+
+> To avoid
+passing command-line arguments every time, 
+> use the configuration file.
+> See the "Configuration" section for more details.
+
+### Adding headers to Jupyter notebooks
+
+Starting in version 0.3.0, you can add headers to Jupyter Notebooks as well.
+
+> To enable Jupyter notebooks, you must
+> install the 'jupyter' optional dependencies, e.g.,
+> `pip install addheader[jupyter]`.
+
+To enable this, add a `-j {suffix}` or `--jupyter {suffix}` argument to the command-line, or
+similarly add a `jupyter: {suffix}` argument in the configuration file.
+The `{suffix}` indicates an alternate file suffix to use for identifying
+whether a file is a Jupyter Notebook, where the default is ".ipynb".
+In the configuration file, use `jupyter: true` to use the default.
+On the command-line, omit the value to use the default.
+
+To set the Jupyter notebook format version, add `--notebook-version {value}` to the command-line or,  equivalently, `notebook_version: {value}` to the configuration file.
+Values can be from 1 to 4. The default value is 4.
+
+The file pattern arguments (see *Specifying file patterns*, above) are still honored,
+but if Jupyter notebooks are enabled, the pattern `*{suffix}` will be automatically added
+ to the patterns to match. Thus, by default `*.ipynb` will be added to the files to match.
+
+If there is no existing header, the Jupyter notebook header will be inserted as the first 'cell', i.e. the first
+item, in the notebook. An existing header will be found anywhere in the notebook (by its `header` tag, see below).
+
+Currently the header cell is of type "code", with every line of the cell
+commented (using a 'markdown' cell is another possibility, but the code cell is friendler to the Jupyterbook machinery, and also retains the header in exported versions of the notebook without markdown cells).
+The content of the header is the same as for text files.
+Two, optionally three, tags will be added to the cell metadata:
+* `header` - Indicates this is the header cell, so it can be modified or removed later.
+* `hide-cell` - If you build documentation with Jupyterbook, this will hide the cell in the generated documentation behind a toggle button (see https://jupyterbook.org/interactive/hiding.html).
+
+Just as for text files, Jupyter notebook headers can be updated or removed.
+
+
+For reference, below is the form of the generated Jupyter notebook cell JSON (with the 'id' field):
+
+```json
+   {
+      "id": "1234567890abcdef1234567890abcdef",
+      "cell_type": "code",
+      "metadata": {
+        "tags": [
+          "header",
+          "hide-cell"
+        ]
+      },
+      "source": [
+        "# Copyright info\n",
+        "# is placed here.\n"
+      ],
+      "outputs": []
+    }
+```
 
 ### Configuration
 To avoid passing commandline arguments every time, you can create a configuration
