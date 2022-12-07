@@ -49,6 +49,7 @@ In this file the notice will be inserted before the first line::
 import argparse
 import json
 from fnmatch import fnmatch
+from importlib.metadata import version
 import logging
 import os
 from pathlib import Path
@@ -476,6 +477,8 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument("root", help="Root path from which to find files", nargs="?")
+    p.add_argument("--version", help="Print current version and stop",
+                   action="store_true")
     p.add_argument(
         "-c", "--config", help=f"Configuration file (default={DEFAULT_CONF})"
     )
@@ -566,6 +569,10 @@ def main() -> int:
     )
     p.add_argument("-q", "--quiet", action="store_true", help="Suppress all output")
     args = p.parse_args()
+
+    if args.version:
+        print(version("addheader"))
+        return 0
 
     # Merge get initial conf from config file
     config_file = None
@@ -771,7 +778,6 @@ def main() -> int:
                     tell_user(f"Notebooks: {', '.join(map(str, file_list))}")
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
