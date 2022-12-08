@@ -172,7 +172,7 @@ def test_jupyter_file_modifier(tmp_path):
     fm = add.JupyterFileModifier(
         """
     Header for
-    all the files""", add_trailing_linesep=False
+    all the files"""
     )
     # add header to files
     for f in ff.notebooks:
