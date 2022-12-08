@@ -302,7 +302,7 @@ class TextFileModifier(FileModifier):
             text: Text to place in header. Ignore for remove and detect functions.
             kwargs: See superclass
         """
-        super().__init__(text, **kwargs)
+        super().__init__(text, add_trailing_linesep=True, **kwargs)
 
     def _process(self, path, mode) -> bool:
         # move input file to <name>.orig
@@ -389,7 +389,7 @@ class JupyterFileModifier(FileModifier):
             text: Text to place in header. Ignore for remove and detect functions.
             kwargs: See superclass
         """
-        super().__init__(text, **kwargs)
+        super().__init__(text, add_trailing_linesep=False, **kwargs)
         self._hdr_tag = self.DEFAULT_HEADER_TAG
         self._ver = ver
 
@@ -553,13 +553,6 @@ def main() -> int:
         help=f"Separator length (default={TextFileModifier.DEFAULT_DELIM_LEN})",
     )
     p.add_argument(
-        "--final-linesep",
-        action="store_true",
-        default=True,
-        help="Put a line separator after the last line, as well. The default is "
-             "True for text files and False for Jupyter notebooks."
-    )
-    p.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -690,15 +683,6 @@ def main() -> int:
         else:
             _log.debug(f"Jupyter notebooks will not be processed")
 
-    # Trailing line separator
-    if args.final_linesep:
-        trailing_sep = args.final_linesep
-    elif "final_linesep" in config_data:
-        trailing_sep = config_data["final_linesep"]
-    else:
-        # Turn off trailing separators for jupyter notebooks by default
-        trailing_sep = not jupyter_ext
-
     # Root
     if args.root:
         root_dir = args.root
@@ -758,7 +742,6 @@ def main() -> int:
                     f"Separator length from '--sep-len' option must be >= {TextFileModifier.DELIM_MINLEN}"
                 )
             kwargs["delim_len"] = sep_len
-        kwargs["add_trailing_linesep"] = trailing_sep
         modifier = TextFileModifier(notice_text, **kwargs)
         modifier_func = modifier.remove if args.remove else modifier.replace
         file_list = visit_files(finder.files, modifier_func)
