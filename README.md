@@ -16,6 +16,10 @@ _addheader_ is written in Python and can be simply installed from the PyPI packa
 
 `pip install addheader`
 
+If you want Jupyter Notebook support, please also install `nbconvert`:
+
+`pip install nbconvert`
+
 ## Usage
 
 Use the command `addheader`. Invoking`addheader -h` shows a detailed help message
