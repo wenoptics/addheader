@@ -165,6 +165,8 @@ def test_text_file_modifier(tmp_path):
 
 
 def test_jupyter_file_modifier(tmp_path):
+    if add.nbformat is None:
+        return
     _make_source_tree(tmp_path)
     root = str(tmp_path.resolve())
     ff = add.FileFinder(root, glob_patterns=[], jupyter_ext=".ipynb")
@@ -231,8 +233,9 @@ def test_cli(tmp_path):
         addheader.add.main()
     with SetArgv(root, "-t", text, "--sep", "=", "--comment", "//", "--sep-len", "80"):
         addheader.add.main()
-    with SetArgv(root, "-t", text, "--jupyter"):
-        addheader.add.main()
+    if add.nbformat is not None:
+        with SetArgv(root, "-t", text, "--jupyter"):
+            addheader.add.main()
 
 
 def test_file_modifier():

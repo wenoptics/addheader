@@ -49,7 +49,10 @@ In this file the notice will be inserted before the first line::
 import argparse
 import json
 from fnmatch import fnmatch
-from importlib.metadata import version
+try:
+    from importlib.metadata import version
+except ImportError:
+    from importlib_metadata import version
 import logging
 import os
 from pathlib import Path
