@@ -14,7 +14,16 @@ See Usage -> Adding headers to Jupyter Notebooks.
 
 _addheader_ is written in Python and can be simply installed from the PyPI package:
 
-`pip install addheader`
+```
+pip install addheader
+```
+
+If you want Jupyter Notebook support, add "jupyter" in square brackets after the name of the package
+(use the quotes unless you know your shell doesn't need them):
+
+```
+pip install 'addheader[jupyter]'
+```
 
 ## Usage
 
