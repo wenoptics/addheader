@@ -55,7 +55,11 @@ def _make_source_tree(root):
     package.mkdir()
     for f in ("__init__.py", "foo.py", "bar.py"):
         fp = (package / f).open("w")
-        if f[0] != "_":
+        if f[0] == "_":
+            pass
+        elif f[0] == "f":
+            fp.write("   \n")  # test whitespace-only file
+        else:
             fp.write("# Comment at top\n"
                      "import sys\n"
                      "\n"
@@ -80,9 +84,8 @@ def test_file_modifier(tmp_path):
     root = str(tmp_path.resolve())
     ff = add.FileFinder(root, glob_patterns=["*.py", "~test_*.py", "~__init__.py"])
     assert len(ff) == 2
-    fm = add.FileModifier("""
-    Header for
-    all the files""")
+    header_text = "\n   Header for\nall the files"
+    fm = add.FileModifier(header_text)
     # add header to files
     for f in ff:
         detected = fm.replace(f)
@@ -131,4 +134,20 @@ def test_cli(tmp_path):
     with SetArgv(root, "-t", text, "--sep", "=", "--comment", "//", "--sep-len", "80"):
         addheader.add.main()
 
+
+def test_empty_ish(tmp_path):
+    root = tmp_path
+    empty_file = root / "empty.txt"
+    text = "New Header\nOn the Block"
+    for whitespace in "", "   ", "  \n", "\n", "\n\n", "#!/usr", "#!/usr\n", "#!/usr\n\n":
+        print(f"whitespace = '{whitespace}'")
+        empty_file.open("w").write(whitespace)
+        fm = add.FileModifier(text)
+        fm.replace(empty_file)
+        contents = empty_file.open("r").read()
+        expected_len = len(whitespace) + fm.header_len + 1
+        # for magic that doesn't end in newline, extra newline inserted
+        if whitespace.startswith("#") and not whitespace.endswith("\n"):
+            expected_len += 1
+        assert len(contents) == expected_len
 
