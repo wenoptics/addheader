@@ -203,6 +203,16 @@ class FileModifier:
         lines = [l.strip() for l in text.split("\n")]
         self._txt = "\n".join([f"{self._pfx} {line}".strip() for line in lines])
 
+    @property
+    def sep_len(self) -> int:
+        """Length of separator line (including comment characters, but not newline)"""
+        return len(self._sep)
+
+    @property
+    def header_len(self) -> int:
+        """Length of entire header text"""
+        return 2 * (self.sep_len + 1) + len(self._txt)
+
     def replace(self, path: Path):
         """Modify header in the file at 'path'.
 
@@ -263,6 +273,7 @@ class FileModifier:
         try:
             # Main loop
             for line in f:
+                #print(f"@@ file={f} state={state} line={line}")
                 line_stripped = line.strip()
                 if state == "pre":
                     if line_stripped.startswith(self._minsep):  # start of header
@@ -300,6 +311,10 @@ class FileModifier:
                 shutil.move(wfname, fname)
         if state == "header":
             _log.error(f"Header started but did not end in file: {path}")
+        elif state == "pre":
+            if lineno > 0 and line[-1] not in ("\r", "\n"):
+                out.write("\n")
+            self._write_header(out)
         if mode != "detect":
             # finalize the output
             out.close()
