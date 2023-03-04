@@ -44,6 +44,7 @@ issues = "https://github.com/idaes/addheader/issues"
 
 [project.optional-dependencies]
 jupyter = ["jupyter"]
+dev = ["pytest"]
 
 [project.scripts]
 addheader = "addheader.add:main"
