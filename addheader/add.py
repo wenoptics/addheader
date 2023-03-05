@@ -238,6 +238,7 @@ class FileModifier:
         # break text into lines and prefix each
         lines = [l.strip() for l in text.split(self.LINESEP)]
         self._lines = [f"{self._pfx} {line}".strip() for line in lines]
+        self._num_text_lines = len(self._lines)
         # frame lines with separator
         self._lines.insert(0, self._sep)
         self._lines.append(self._sep)
@@ -250,7 +251,7 @@ class FileModifier:
     @property
     def header_len(self) -> int:
         """Length of entire header text"""
-        return 2 * (self.sep_len + 1) + len(self._txt)
+        return sum((len(x) for x in self._lines)) + 2 + self._num_text_lines
 
     def replace(self, path: Path):
         """Modify header in the file at 'path'.
