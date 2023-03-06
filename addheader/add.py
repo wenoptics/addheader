@@ -49,6 +49,7 @@ In this file the notice will be inserted before the first line::
 import argparse
 import json
 from fnmatch import fnmatch
+
 try:
     from importlib.metadata import version
 except ImportError:
@@ -59,6 +60,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import time
 from typing import List, Union, Optional
 from uuid import uuid4
 
@@ -205,7 +207,6 @@ def detect_files(finder: FileFinder):
 
 
 class FileModifier:
-
     EMPTY_TEXT = "..."  # text used if none is given
     DEFAULT_COMMENT = "#"
     DEFAULT_DELIM_CHAR = "#"
@@ -219,7 +220,7 @@ class FileModifier:
         comment_prefix=DEFAULT_COMMENT,
         delim_char=DEFAULT_DELIM_CHAR,
         delim_len=DEFAULT_DELIM_LEN,
-        add_trailing_linesep = True
+        add_trailing_linesep=True,
     ):
         """Constructor.
 
@@ -290,7 +291,53 @@ class FileModifier:
             return [s + self.LINESEP for s in self._lines[:-1]] + [self._lines[-1]]
 
 
-class TextFileModifier(FileModifier):
+class ObservedSubject:
+    event_file = "file"
+    event_file_detect = "detect-file"
+    event_line = "line"
+
+    def __init__(self):
+        self._obs = {}
+
+    def add_observer(self, func, names):
+        self._obs[func] = names
+
+    def event(self, name, **kwargs):
+        for obs, names in self._obs.items():
+            if name in names:
+                obs(name, **kwargs)
+
+
+class ProgressBar:
+    def __init__(self):
+        self.files = []
+        self.markers = ""
+        self.t0, t1 = 0, 0
+        self.maxlen = 0
+    def begin(self):
+        self.t0 = time.time()
+        print(f"{'Process':20s} [", end="\r")
+
+    def end(self):
+        self.t1 = time.time()
+        sec = self.t1 - self.t0
+        p = f"processed {len(self.files)} files in {sec:.3f} seconds"
+        if len(p) < self.maxlen:
+            p += " " * (self.maxlen - len(p))
+        print(p)
+
+    def file_processed(self, event, path=None, written=True, **kwargs):
+        self.files.append(path)
+        self.markers += "." if written else " "
+        name = path.name[:20]
+        n = len(self.files)
+        p = f"({n:<4d}) {name:20s} [{self.markers}]"
+        print(p, end="\r")
+        self.maxlen = max(self.maxlen, len(p))
+        # time.sleep(0.5) # for debugging
+
+
+class TextFileModifier(FileModifier, ObservedSubject):
     """Modify a file with a header."""
 
     # File 'magic' allowed in first two header_lines before comment
@@ -305,10 +352,12 @@ class TextFileModifier(FileModifier):
             text: Text to place in header. Ignore for remove and detect functions.
             kwargs: See superclass
         """
-        super().__init__(text, add_trailing_linesep=True, **kwargs)
+        ObservedSubject.__init__(self)
+        FileModifier.__init__(self, text, add_trailing_linesep=True, **kwargs)
 
-    def _process(self, path, mode) -> bool:
+    def _process(self, path: Path, mode) -> bool:
         # move input file to <name>.orig
+        orig_mode = path.stat().st_mode
         if mode == "detect":
             f = path.open("r", encoding="utf8")
             out, fname, wfname = None, None, None
@@ -329,8 +378,10 @@ class TextFileModifier(FileModifier):
         state, lineno = "pre", 0
         detected, line_stripped = False, ""
         try:
+            header_written = False
             # Main loop
             for line in f:
+                self.event(ObservedSubject.event_line, path=path, index=lineno)
                 line_stripped = line.strip()
                 if state == "pre":
                     if line_stripped.startswith(self._minsep):  # start of header
@@ -343,6 +394,7 @@ class TextFileModifier(FileModifier):
                     # if we changed state, write the header (or skip it)
                     if state != "pre" and mode == "replace":
                         self._write_header(out)
+                        header_written = True
                     if state == "post" and mode != "detect":
                         # no header, so write last line of text below header
                         out.write(line)
@@ -371,9 +423,11 @@ class TextFileModifier(FileModifier):
         if mode != "detect":
             # finalize the output
             out.close()
+            path.chmod(orig_mode)  # restore original mode bits
             f.close()
             # remove moved <name>.orig, the original input file
             os.unlink(wfname)
+            self.event(ObservedSubject.event_file, path=path, written=header_written)
         return detected
 
 
@@ -480,8 +534,9 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument("root", help="Root path from which to find files", nargs="?")
-    p.add_argument("--version", help="Print current version and stop",
-                   action="store_true")
+    p.add_argument(
+        "--version", help="Print current version and stop", action="store_true"
+    )
     p.add_argument(
         "-c", "--config", help=f"Configuration file (default={DEFAULT_CONF})"
     )
@@ -518,7 +573,7 @@ def main() -> int:
             default=JupyterFileModifier.DEFAULT_VER,
             type=int,
             help=f"Set Jupyter notebook format version "
-                 f"(default={JupyterFileModifier.DEFAULT_VER})",
+            f"(default={JupyterFileModifier.DEFAULT_VER})",
         )
     p.add_argument(
         "-P",
@@ -554,6 +609,9 @@ def main() -> int:
         type=int,
         default=-1,
         help=f"Separator length (default={TextFileModifier.DEFAULT_DELIM_LEN})",
+    )
+    p.add_argument(
+        "--no-progress", action="store_true", help="Do not show progress bar"
     )
     p.add_argument(
         "-v",
@@ -617,6 +675,9 @@ def main() -> int:
         _log.setLevel(logging.INFO)
     else:
         _log.setLevel(logging.WARN)
+
+    # progress bar
+    show_progress = not (config_data.get("no-progress", None) or args.no_progress)
 
     # read notice from file
     notice_text = ""
@@ -705,7 +766,7 @@ def main() -> int:
             root_dir,
             glob_patterns=patterns,
             path_exclude=path_exclude,
-            jupyter_ext=jupyter_ext
+            jupyter_ext=jupyter_ext,
         )
     except Exception as err:
         p.error(f"Finding files: {err}")
@@ -747,10 +808,19 @@ def main() -> int:
             kwargs["delim_len"] = sep_len
         modifier = TextFileModifier(notice_text, **kwargs)
         modifier_func = modifier.remove if args.remove else modifier.replace
+        if show_progress:
+            prog_bar = ProgressBar()
+            modifier.add_observer(prog_bar.file_processed, (ObservedSubject.event_file,))
+            prog_bar.begin()
+        else:
+            prog_bar = None
         file_list = visit_files(finder.files, modifier_func)
+        if prog_bar:
+            prog_bar.end()
         plural = "s" if len(file_list) > 1 else ""
-        tell_user(f"Modified {len(file_list)} source file{plural}")
-        if _log.isEnabledFor(logging.INFO):
+        if not show_progress:
+            tell_user(f"Modified {len(file_list)} source file{plural}")
+        if _log.isEnabledFor(logging.DEBUG):
             tell_user(f"Files: {', '.join(map(str, file_list))}")
         # Jupyter
         if jupyter_ext:
@@ -762,8 +832,8 @@ def main() -> int:
                 tell_user(f"Modified {len(file_list)} Jupyter notebook{plural}")
                 if _log.isEnabledFor(logging.INFO):
                     tell_user(f"Notebooks: {', '.join(map(str, file_list))}")
-
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
