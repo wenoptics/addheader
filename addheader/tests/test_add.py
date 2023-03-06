@@ -61,8 +61,6 @@ def _make_source_tree(root):
         fp = (package / f).open("w")
         if f[0] == "_":
             pass
-        elif f[0] == "f":
-            fp.write("   \n")  # test whitespace-only file
         else:
             fp.write("# Comment at top\n"
                      "import sys\n"
@@ -247,17 +245,22 @@ def test_empty_ish(tmp_path):
     root = tmp_path
     empty_file = root / "empty.txt"
     text = "New Header\nOn the Block\n1\n2"
-    for whitespace in "", "   ", "  \n", "\n", "\n\n", "#!/usr", "#!/usr\n", "#!/usr\n\n":
-        print(f"whitespace = '{whitespace}'")
-        empty_file.open("w").write(whitespace)
-        fm = add.TextFileModifier(text)
-        fm.replace(empty_file)
-        contents = empty_file.open("r").read()
-        expected_len = len(whitespace) + fm.header_len
-        # for magic that doesn't end in newline, extra newline inserted
-        if whitespace.startswith("#") and not whitespace.endswith("\n"):
-            expected_len += 1
-        assert len(contents) == expected_len
+    for allow_empty in False, True:
+        print(f"allow empty = {allow_empty}")
+        for whitespace in "", "   ", "  \n", "\n", "\n\n", "#!/usr", "#!/usr\n", "#!/usr\n\n":
+            print(f"whitespace = '{whitespace}'")
+            empty_file.open("w").write(whitespace)
+            fm = add.TextFileModifier(text, empty_files=allow_empty)
+            fm.replace(empty_file)
+            contents = empty_file.open("r").read()
+            if allow_empty or len(whitespace.strip()):
+                expected_len = len(whitespace) + fm.header_len
+            else:
+                expected_len = len(whitespace)
+            # for magic that doesn't end in newline, extra newline inserted
+            if whitespace.startswith("#") and not whitespace.endswith("\n"):
+                expected_len += 1
+            assert len(contents) == expected_len
 
 
 def test_file_modifier():
