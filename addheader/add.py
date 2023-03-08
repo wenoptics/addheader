@@ -76,6 +76,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import time
 from typing import List, Union, Optional
 from uuid import uuid4
 
@@ -319,7 +320,53 @@ class FileModifier:
             return [s + self.LINESEP for s in self._lines[:-1]] + [self._lines[-1]]
 
 
-class TextFileModifier(FileModifier):
+class ObservedSubject:
+    event_file = "file"
+    event_file_detect = "detect-file"
+    event_line = "line"
+
+    def __init__(self):
+        self._obs = {}
+
+    def add_observer(self, func, names):
+        self._obs[func] = names
+
+    def event(self, name, **kwargs):
+        for obs, names in self._obs.items():
+            if name in names:
+                obs(name, **kwargs)
+
+
+class ProgressBar:
+    def __init__(self):
+        self.files = []
+        self.markers = ""
+        self.t0, t1 = 0, 0
+        self.maxlen = 0
+    def begin(self):
+        self.t0 = time.time()
+        print(f"{'Process':20s} [", end="\r")
+
+    def end(self):
+        self.t1 = time.time()
+        sec = self.t1 - self.t0
+        p = f"processed {len(self.files)} files in {sec:.3f} seconds"
+        if len(p) < self.maxlen:
+            p += " " * (self.maxlen - len(p))
+        print(p)
+
+    def file_processed(self, event, path=None, written=True, **kwargs):
+        self.files.append(path)
+        self.markers += "." if written else " "
+        name = path.name[:20]
+        n = len(self.files)
+        p = f"({n:<4d}) {name:20s} [{self.markers}]"
+        print(p, end="\r")
+        self.maxlen = max(self.maxlen, len(p))
+        # time.sleep(0.5) # for debugging
+
+
+class TextFileModifier(FileModifier, ObservedSubject):
     """Modify a file with a header."""
 
     # File 'magic' allowed in first two header_lines before comment
@@ -334,10 +381,12 @@ class TextFileModifier(FileModifier):
             text: Text to place in header. Ignore for remove and detect functions.
             kwargs: See superclass
         """
-        super().__init__(text, add_trailing_linesep=True, **kwargs)
+        ObservedSubject.__init__(self)
+        FileModifier.__init__(self, text, add_trailing_linesep=True, **kwargs)
 
-    def _process(self, path, mode) -> bool:
+    def _process(self, path: Path, mode) -> bool:
         # move input file to <name>.orig
+        orig_mode = path.stat().st_mode
         if mode == "detect":
             f = path.open("r", encoding="utf8")
             out, fname, wfname = None, None, None
@@ -359,8 +408,10 @@ class TextFileModifier(FileModifier):
         detected, line_stripped = False, ""
         non_whitespace = 0
         try:
+            header_written = False
             # Main loop
             for line in f:
+                self.event(ObservedSubject.event_line, path=path, index=lineno)
                 line_stripped = line.strip()
                 non_whitespace += len(line_stripped)
                 if state == "pre":
@@ -377,6 +428,7 @@ class TextFileModifier(FileModifier):
                     # if we changed state, write the header (or skip it)
                     if state != "pre" and mode == "replace":
                         self._write_header(out)
+                        header_written = True
                     if state == "post" and mode != "detect":
                         # no header, so write last line of text below header
                         out.write(line)
@@ -411,9 +463,11 @@ class TextFileModifier(FileModifier):
         if mode != "detect":
             # finalize the output
             out.close()
+            path.chmod(orig_mode)  # restore original mode bits
             f.close()
             # remove moved <name>.orig, the original input file
             os.unlink(wfname)
+            self.event(ObservedSubject.event_file, path=path, written=header_written)
         return detected
 
 
@@ -603,6 +657,7 @@ def main() -> int:
         "--text",
         help="File containing header text. "
         "Ignored if --dry-run or --remove options are given.",
+        "--no-progress", action="store_true", help="Do not show progress bar"
     )
     p.add_argument(
         "-v",
@@ -665,6 +720,9 @@ def main() -> int:
         _log.setLevel(logging.INFO)
     else:
         _log.setLevel(logging.WARN)
+
+    # progress bar
+    show_progress = not (config_data.get("no-progress", None) or args.no_progress)
 
     # read notice from file
     notice_text = ""
@@ -803,10 +861,19 @@ def main() -> int:
             kwargs["delim_len"] = sep_len
         modifier = TextFileModifier(notice_text, **kwargs)
         modifier_func = modifier.remove if args.remove else modifier.replace
+        if show_progress:
+            prog_bar = ProgressBar()
+            modifier.add_observer(prog_bar.file_processed, (ObservedSubject.event_file,))
+            prog_bar.begin()
+        else:
+            prog_bar = None
         file_list = visit_files(finder.files, modifier_func)
+        if prog_bar:
+            prog_bar.end()
         plural = "s" if len(file_list) > 1 else ""
-        tell_user(f"Modified {len(file_list)} source file{plural}")
-        if _log.isEnabledFor(logging.INFO):
+        if not show_progress:
+            tell_user(f"Modified {len(file_list)} source file{plural}")
+        if _log.isEnabledFor(logging.DEBUG):
             tell_user(f"Files: {', '.join(map(str, file_list))}")
         # Jupyter
         if jupyter_ext:
@@ -818,7 +885,6 @@ def main() -> int:
                 tell_user(f"Modified {len(file_list)} Jupyter notebook{plural}")
                 if _log.isEnabledFor(logging.INFO):
                     tell_user(f"Notebooks: {', '.join(map(str, file_list))}")
-
     return 0
 
 
