@@ -657,6 +657,8 @@ def main() -> int:
         "--text",
         help="File containing header text. "
         "Ignored if --dry-run or --remove options are given.",
+    )
+    p.add_argument(
         "--no-progress", action="store_true", help="Do not show progress bar"
     )
     p.add_argument(

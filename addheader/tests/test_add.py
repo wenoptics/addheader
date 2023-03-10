@@ -281,12 +281,12 @@ def test_file_modifier():
 
 
 def test_progress_manyfiles(tmp_path):
-    depth, branches, nfiles = 5, 3, 10
+    depth, branches, num_files = 4, 3, 10
 
     def populate(p: Path, d: int):
         if d >= depth:
             return
-        for i in range(nfiles):
+        for i in range(num_files):
             afile = p / f"f{i}.py"
             afile.open("w").write(f"File {i}")
         for i in range(branches):
@@ -297,7 +297,7 @@ def test_progress_manyfiles(tmp_path):
     populate(tmp_path, 0)
     notice_text = "This is a header\nIt goes at the head of the file"
     ff = add.FileFinder(tmp_path, glob_patterns=["*.py"])
-    deltas = []
+    deltas, total_num_files = [], 0
     for i in range(3):
         dt = {}
         for progress in False, True:
@@ -310,6 +310,7 @@ def test_progress_manyfiles(tmp_path):
             files = add.visit_files(ff.files, fm.replace)
             t1 = time.time()
             n = len(files)
+            total_num_files += n
             dt[progress] = t1 - t0
             print(f"Time {('without', 'with')[progress]} progress for {n} files: {dt[progress]:.2f}s")
         deltas.append(dt)
@@ -319,5 +320,5 @@ def test_progress_manyfiles(tmp_path):
         tot += dt[False]
         prog_tot += dt[True]
     slowdown = pdiff / tot
-    print(f"Mean time = {tot / 3:.1f}s ({tot / 3 / n * 1000:.3f}ms/file), {prog_tot / 3:.1f}s with progress")
+    print(f"Mean time = {tot / 3:.1f}s ({tot / total_num_files * 1000:.3f}ms/file), {prog_tot / 3:.1f}s with progress")
     print(f"Mean extra time from progress = {pdiff / 3:.1f}s out of {tot / 3:.1f}s, a {slowdown * 100:.1f}% slowdown")
