@@ -42,6 +42,7 @@ github = "https://github.com/idaes/addheader"
 issues = "https://github.com/idaes/addheader/issues"
 
 [project.optional-dependencies]
+dev = ["pytest"]
 jupyter = ["nbformat"]
 
 [project.scripts]

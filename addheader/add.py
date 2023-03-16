@@ -19,31 +19,47 @@
 #
 ##############################################################################
 """
-Put a notice in the header of all files in a source code tree.
+Put a header in all files in a source code tree.
 
-An existing notice will be replaced, and if there is no notice
-encountered then one will be inserted. Detection of the notice
-is exceedingly simple: if any line without a comment is encountered, from
-the top of the file, before the standard "separator" of a long string
-of comment characters, then the notice will be inserted. Likewise, the
-"end" of the notice is either the same separator used for the beginning or
-a line that is not commented.
+An existing header will be replaced, and if there is no header
+encountered then one will be inserted. The new header is inserted
+after the first non-file-magic line in the file. Empty files and
+files that are only whitespace are ignored by default.
 
 For example, in the following the notice will be inserted between the
-second and third header_lines::
+first and second line::
 
     #!/usr/bin/env python
     # hello
-    # <notice inserted here>
     import sys
 
-In this file the notice will be inserted before the first line::
+to look like this::
 
-    # <notice inserted here>
+    #!/usr/bin/env python
+    ###############################
+    # header inserted here
+    ###############################
+    # hello
+    import sys
+
+In this file the header will be inserted before the first line::
+
     '''
-    Top of the file comment
+    This module does things.
     '''
     import logging
+
+to look like this::
+    
+    ###############################
+    # header inserted here
+    ###############################
+    '''
+    This module does things.
+    '''
+    import logging
+    
+
 """
 # stdlib
 import argparse
@@ -221,6 +237,7 @@ class FileModifier:
         delim_char=DEFAULT_DELIM_CHAR,
         delim_len=DEFAULT_DELIM_LEN,
         add_trailing_linesep=True,
+        empty_files=False,
     ):
         """Constructor.
 
@@ -231,6 +248,7 @@ class FileModifier:
             delim_len: Number of `delim_char` characters to put together to make a delimiter line
         """
         self._trail = add_trailing_linesep
+        self._empty = empty_files
         self._pfx = comment_prefix
         self._sep = comment_prefix + delim_char * delim_len
         self._minsep = comment_prefix + delim_char * self.DELIM_MINLEN
@@ -239,9 +257,20 @@ class FileModifier:
         # break text into lines and prefix each
         lines = [l.strip() for l in text.split(self.LINESEP)]
         self._lines = [f"{self._pfx} {line}".strip() for line in lines]
+        self._num_text_lines = len(self._lines)
         # frame lines with separator
         self._lines.insert(0, self._sep)
         self._lines.append(self._sep)
+
+    @property
+    def sep_len(self) -> int:
+        """Length of separator line (including comment characters, but not newline)"""
+        return len(self._sep)
+
+    @property
+    def header_len(self) -> int:
+        """Length of entire header text"""
+        return sum((len(x) for x in self._lines)) + 2 + self._num_text_lines
 
     def replace(self, path: Path):
         """Modify header in the file at 'path'.
@@ -377,12 +406,14 @@ class TextFileModifier(FileModifier, ObservedSubject):
         # re-create the file, modified
         state, lineno = "pre", 0
         detected, line_stripped = False, ""
+        non_whitespace = 0
         try:
             header_written = False
             # Main loop
             for line in f:
                 self.event(ObservedSubject.event_line, path=path, index=lineno)
                 line_stripped = line.strip()
+                non_whitespace += len(line_stripped)
                 if state == "pre":
                     if line_stripped.startswith(self._minsep):  # start of header
                         state = "header"
@@ -390,7 +421,10 @@ class TextFileModifier(FileModifier, ObservedSubject):
                         if mode != "detect":
                             out.write(line)
                     else:
-                        state = "post"  # no header, will copy rest of file
+                        if non_whitespace > 0 or self._empty:
+                            state = "post"  # no header, will copy rest of file
+                        elif line and out:
+                            out.write(line)
                     # if we changed state, write the header (or skip it)
                     if state != "pre" and mode == "replace":
                         self._write_header(out)
@@ -420,6 +454,12 @@ class TextFileModifier(FileModifier, ObservedSubject):
                 shutil.move(wfname, fname)
         if state == "header":
             _log.error(f"Header started but did not end in file: {path}")
+        elif state == "pre":
+            # Write header in empty or file-magic-only files
+            if non_whitespace > 0 or self._empty:
+                if lineno > 0 and line[-1] not in ("\r", "\n"):
+                    out.write("\n")
+                self._write_header(out)
         if mode != "detect":
             # finalize the output
             out.close()
@@ -541,19 +581,9 @@ def main() -> int:
         "-c", "--config", help=f"Configuration file (default={DEFAULT_CONF})"
     )
     p.add_argument(
-        "-t",
-        "--text",
-        help="File containing header text. "
-        "Ignored if --dry-run or --remove options are given.",
-    )
-    p.add_argument(
-        "-p",
-        "--pattern",
-        action="append",
-        default=[],
-        help="UNIX glob-style pattern of files to match (repeatable). "
-        "Prefix a pattern with '~' to take complement. "
-        "(default = *.py, ~__init__.py)",
+        "-C",
+        "--comment",
+        help=f"Comment prefix (default='{TextFileModifier.DEFAULT_COMMENT})'",
     )
     if nbformat is not None:
         p.add_argument(
@@ -576,11 +606,10 @@ def main() -> int:
             f"(default={JupyterFileModifier.DEFAULT_VER})",
         )
     p.add_argument(
-        "-P",
-        "--path-exclude",
-        action="append",
-        default=[],
-        help="UNIX glob-style pattern of paths to exclude (repeatable)",
+        "-e",
+        "--empty",
+        action="store_true",
+        help="Add headers to 'empty' files, which includes files containing only whitespace",
     )
     p.add_argument(
         "-n",
@@ -590,15 +619,28 @@ def main() -> int:
         help="Do not modify files, just show which files would be affected",
     )
     p.add_argument(
+        "-p",
+        "--pattern",
+        action="append",
+        default=[],
+        help="UNIX glob-style pattern of files to match (repeatable). "
+        "Prefix a pattern with '~' to take complement. "
+        "(default = *.py, ~__init__.py)",
+    )
+    p.add_argument(
+        "-P",
+        "--path-exclude",
+        action="append",
+        default=[],
+        help="UNIX glob-style pattern of paths to exclude (repeatable)",
+    )
+    p.add_argument("-q", "--quiet", action="store_true", help="Suppress all output")
+    p.add_argument(
         "-r",
         "--remove",
         action="store_true",
         dest="remove",
         help="Remove headers from files, but do not replace them with anything",
-    )
-    p.add_argument(
-        "--comment",
-        help=f"Comment prefix (default='{TextFileModifier.DEFAULT_COMMENT})'",
     )
     p.add_argument(
         "--sep",
@@ -611,6 +653,12 @@ def main() -> int:
         help=f"Separator length (default={TextFileModifier.DEFAULT_DELIM_LEN})",
     )
     p.add_argument(
+        "-t",
+        "--text",
+        help="File containing header text. "
+        "Ignored if --dry-run or --remove options are given.",
+    )
+    p.add_argument(
         "--no-progress", action="store_true", help="Do not show progress bar"
     )
     p.add_argument(
@@ -621,7 +669,6 @@ def main() -> int:
         default=0,
         help="More verbose logging",
     )
-    p.add_argument("-q", "--quiet", action="store_true", help="Suppress all output")
     args = p.parse_args()
 
     if args.version:
@@ -776,6 +823,10 @@ def main() -> int:
         )
         return 1
 
+    # Skip whitespace
+    else:
+        empty_files = False
+
     # Find and replace files
     if args.dry:
         visit_files(finder.files, print_file)
@@ -790,6 +841,10 @@ def main() -> int:
             kwargs["delim_char"] = args.sep[0]
         elif "sep" in config_data:
             kwargs["delim_char"] = config_data["sep"]
+        if args.empty:
+            kwargs["empty_files"] = args.empty
+        elif "empty" in config_data:
+            kwargs["empty_files"] = config_data["empty"]
         sep_len = None
         if args.sep_len > 0:
             sep_len = args.sep_len
