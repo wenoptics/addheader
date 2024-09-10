@@ -1,0 +1,6 @@
+- id: addheader
+  name: Add Header
+  description: Add a header to the top of files
+  language: python
+  entry: addheader --file-list
+  pass_filenames: true

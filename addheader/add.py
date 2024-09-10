@@ -698,9 +698,9 @@ def main() -> int:
     p.add_argument(
         "-f",
         "--file-list",
-        action="append",
+        nargs="+",
         default=[],
-        help="Specify individual files to process (repeatable)",
+        help="Specify individual files to process",
     )
     args = p.parse_args()
 
