@@ -2,5 +2,7 @@
   name: Add Header
   description: Add a header to the top of files
   language: python
-  entry: addheader --file-list
+  entry: addheader
+  args:
+    - --file-list
   pass_filenames: true

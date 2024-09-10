@@ -243,6 +243,20 @@ To use addheader with pre-commit, add the following to your `.pre-commit-config.
         files: \.py$
 ```
 
+or
+
+```yaml
+-   repo: https://github.com/IDAES/addheader
+    rev: main
+    hooks:
+    -   id: addheader
+        files: \.py$
+        args:
+        - -c
+        - myoptions.conf
+        - --file-list
+```
+
 ## Credits
 The _addheader_ program was developed for use in the [IDAES](www.idaes.org) project and is maintained in the
 IDAES organization in Github at https://github.com/IDAES/addheader . The primary author
