@@ -143,6 +143,30 @@ def test_file_finder(tmp_path):
     ff = add.FileFinder(root, glob_patterns=["*.ipynb"])
     assert len(ff) == 2
 
+    # New test cases for file_list option
+    specific_files = [
+        str(tmp_path / "mypackage" / "foo.py"),
+        str(tmp_path / "mypackage" / "bar.py"),
+        str(tmp_path / "mypackage" / "nb" / "foo_hdr.ipynb"),
+    ]
+    ff = add.FileFinder(root, file_list=specific_files)
+    assert len(ff) == 2
+
+    # Test with non-existent file in file_list
+    non_existent_file = str(tmp_path / "non_existent.py")
+    ff = add.FileFinder(root, file_list=specific_files + [non_existent_file])
+    assert len(ff) == 2  # Should ignore the non-existent file
+
+    # Test with file_list that includes all glob_patterns
+    ff = add.FileFinder(root, glob_patterns=["*.*"], file_list=specific_files)
+    assert len(ff) == 3
+
+    # Test with both glob_patterns and file_list
+    ff = add.FileFinder(root, glob_patterns=["*.py"], file_list=specific_files)
+    assert len(ff) == 2
+    ff = add.FileFinder(root, glob_patterns=["*.ipynb"], file_list=specific_files)
+    assert len(ff) == 1
+
 
 def test_text_file_modifier(tmp_path):
     _make_source_tree(tmp_path)

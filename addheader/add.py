@@ -121,11 +121,19 @@ class FileFinder(object):
         glob_patterns: Optional[List[str]] = None,
         path_exclude: Optional[List[str]] = None,
         jupyter_ext: Optional[str] = None,
+        file_list: Optional[List[Union[str, Path]]] = None,
     ):
-        if not hasattr(root, "open"):  # not a Path-like
-            root = Path(root)
-        if not root.is_dir():
-            raise FileNotFoundError(f"Root '{root}' must be a directory")
+        if file_list:
+            self._file_list = [Path(f) for f in file_list]
+            self._root = None
+        else:
+            self._file_list = None
+            if not hasattr(root, "open"):  # not a Path-like
+                root = Path(root)
+            if not root.is_dir():
+                raise FileNotFoundError(f"Root '{root}' must be a directory")
+            self._root = root
+
         if glob_patterns is None:
             # use default patterns if none are given
             glob_patterns = self.DEFAULT_PATTERNS.copy()
@@ -147,38 +155,57 @@ class FileFinder(object):
         else:
             self._jupyter_ext = None
 
-        self._root, self._q, self._jupyter_q = root, None, None
+        self._q, self._jupyter_q = None, None
         self.reset()
 
     def reset(self):
         self._q = []
         if self._jupyter_ext:
             self._jupyter_q = []
-        for pat in self._patterns["positive"]:
-            self._find(pat)
+        if self._file_list:
+            self._process_file_list()
+        else:
+            for pat in self._patterns["positive"]:
+                self._find(pat)
 
     def __len__(self):
         jn = len(self._jupyter_q) if self._jupyter_q else 0
         tn = len(self._q)
         return tn + jn
 
+    def _process_file_list(self):
+        for path in self._file_list:
+            if not path.exists():
+                _log.warning(f"File not found: {path}")
+                continue
+            if self._is_file_match(path):
+                if self._jupyter_ext and path.name.endswith(self._jupyter_ext):
+                    self._jupyter_q.append(path)
+                    _log.debug(f"Notebook matched: {path.name}")
+                else:
+                    self._q.append(path)
+                    _log.debug(f"File matched: {path.name}")
+
+    def _is_file_match(self, path: Path) -> bool:
+        _log.debug(f"Checking file: {path.name}")
+        for exclude in self._patterns["negative"]:
+            if fnmatch(path.name, exclude):
+                return False
+        spath = str(path)
+        for excludep in self._path_exclude:
+            if fnmatch(spath, excludep):
+                return False
+        for include in self._patterns["positive"]:
+            if fnmatch(path.name, include):
+                return True
+        return False
+
     def _find(self, pattern: str):
         """Recursively find all files matching glob 'pattern' from `self._root`
         and add these files (as Path objects) to `self._q`.
         """
         for path in self._root.glob(f"**/{pattern}"):
-            _log.debug(f"Checking file: {path.name}")
-            match_exclude = False
-            for exclude in self._patterns["negative"]:
-                if fnmatch(path.name, exclude):
-                    match_exclude = True
-                    break
-            spath = str(path)
-            for excludep in self._path_exclude:
-                if fnmatch(spath, excludep):
-                    match_exclude = True
-                    break
-            if not match_exclude:
+            if self._is_file_match(path):
                 if self._jupyter_ext and path.name.endswith(self._jupyter_ext):
                     self._jupyter_q.append(path)
                     _log.debug(f"Notebook matched: {path.name}")
@@ -567,7 +594,6 @@ def print_file(name):
     _file_count += 1
     print(f"{_file_count:3d} {name}")
 
-
 def main() -> int:
     global g_quiet
     p = argparse.ArgumentParser(
@@ -668,6 +694,13 @@ def main() -> int:
         dest="vb",
         default=0,
         help="More verbose logging",
+    )
+    p.add_argument(
+        "-f",
+        "--file-list",
+        action="append",
+        default=[],
+        help="Specify individual files to process (repeatable)",
     )
     args = p.parse_args()
 
@@ -800,7 +833,7 @@ def main() -> int:
     elif "root" in config_data:
         root_dir = config_data["root"]
     else:
-        p.error("Root directory not found on command-line or configuration file")
+        root_dir = None
 
     if config_data.get("path_exclude", None) is None:
         path_exclude = None if len(args.path_exclude) == 0 else args.path_exclude
@@ -809,12 +842,23 @@ def main() -> int:
 
     # Initialize file-finder
     try:
-        finder = FileFinder(
-            root_dir,
-            glob_patterns=patterns,
-            path_exclude=path_exclude,
-            jupyter_ext=jupyter_ext,
-        )
+        if args.file_list:
+            finder = FileFinder(
+                root_dir,
+                glob_patterns=patterns,
+                path_exclude=path_exclude,
+                jupyter_ext=jupyter_ext,
+                file_list=args.file_list,
+            )
+        elif root_dir:
+            finder = FileFinder(
+                root_dir,
+                glob_patterns=patterns,
+                path_exclude=path_exclude,
+                jupyter_ext=jupyter_ext,
+            )
+        else:
+            p.error("Either root directory or file list must be provided")
     except Exception as err:
         p.error(f"Finding files: {err}")
     if len(finder) == 0:
