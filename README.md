@@ -229,6 +229,20 @@ def test_headers():
     assert len(missing_header) == 0
 ```
 
+### Using with pre-commit
+
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
+
+To use addheader with pre-commit, add the following to your `.pre-commit-config.yaml` file:
+
+```yaml
+-   repo: https://github.com/IDAES/addheader
+    rev: main
+    hooks:
+    -   id: addheader
+        files: \.py$
+```
+
 ## Credits
 The _addheader_ program was developed for use in the [IDAES](www.idaes.org) project and is maintained in the
 IDAES organization in Github at https://github.com/IDAES/addheader . The primary author
